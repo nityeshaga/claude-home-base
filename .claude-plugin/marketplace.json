@@ -1,0 +1,25 @@
+{
+  "name": "claude-home-base",
+  "owner": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  "metadata": {
+    "description": "AI cofounder infrastructure — Slack bot, AI-powered tools, and always-on automation running on a Mac.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "more-ai",
+      "source": "./plugins/more-ai",
+      "description": "Other AI models for tasks they excel at — Gemini image generation and Gemini thinking.",
+      "version": "1.0.0"
+    },
+    {
+      "name": "tactical",
+      "source": "./plugins/tactical",
+      "description": "Structured workflows for thinking, creativity, decision-making, and operational work — brainstorming sessions, inbox management with learn-by-observation calibration.",
+      "version": "1.0.0"
+    }
+  ]
+}
