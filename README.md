@@ -21,11 +21,10 @@ A complete setup for turning a spare Mac (Mini, MacBook Air, whatever) into a de
 
 ## Quick start
 
-1. **Fork this repo**
-2. **Follow the guide** at the GitHub Pages site (enable Pages in repo settings → source: main branch)
-3. **Configure** — fill in `.env`, `CLAUDE.md.example` → `CLAUDE.md`, team details
-4. **Run the identity prompt** — let your AI write its own `identity.md`
-5. **Deploy** — launchd keeps everything alive, Cloudflare Tunnel handles Slack
+1. **Follow the setup guide** at **[nityeshaga.github.io/claude-home-base](https://nityeshaga.github.io/claude-home-base/)** — it walks you through everything step by step
+2. **Set up hardware** — plug in your Mac, configure it for always-on use
+3. **Deploy the Slack bot** — Cloudflare Tunnel + Flask, production-standard
+4. **Install the starter kit** — the final step in the guide has you paste one prompt into Claude Code. It clones this repo, installs plugins, asks you a few questions, and writes its own identity. You watch it come alive.
 
 ## What's in the box
 
