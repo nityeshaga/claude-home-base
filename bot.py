@@ -462,12 +462,35 @@ def send_dm(
     return effective_thread_ts
 
 
-def send_to_channel(channel: str, message: str) -> None:
-    """Post a message to a channel."""
+def send_to_channel(
+    channel: str,
+    message: str,
+    session_id: str | None = None,
+    thread_ts: str | None = None,
+) -> str | None:
+    """Post a message to a channel (optionally in a thread). Returns thread_ts."""
     slack_text = md_to_slack(message)
-    for chunk in chunk_message(slack_text):
-        slack_client.chat_postMessage(channel=channel, text=chunk)
-    audit_logger.info(f"PROACTIVE_CHANNEL | CHANNEL:{channel} | MSG_LEN:{len(message)}")
+    chunks = chunk_message(slack_text)
+
+    parent_ts = thread_ts
+    for chunk in chunks:
+        result = slack_client.chat_postMessage(
+            channel=channel, text=chunk, thread_ts=parent_ts,
+        )
+        if parent_ts is None:
+            parent_ts = result["ts"]
+
+    effective_thread_ts = thread_ts or parent_ts
+
+    if session_id and effective_thread_ts:
+        _save_session(effective_thread_ts, session_id)
+
+    audit_logger.info(
+        f"PROACTIVE_CHANNEL | CHANNEL:{channel} "
+        f"| THREAD:{effective_thread_ts} | SESSION:{session_id or 'none'} "
+        f"| MSG_LEN:{len(message)}"
+    )
+    return effective_thread_ts
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +748,7 @@ def main():
         return
 
     if args.channel:
-        send_to_channel(args.channel[0], args.channel[1])
+        send_to_channel(args.channel[0], args.channel[1], thread_ts=args.thread)
         return
 
     # Server mode
