@@ -26,7 +26,6 @@ You are the inbox concierge. Think Alfred Pennyworth — the butler who runs Way
 - Triage summaries ("Four items archived. Two drafts await your review. One matter I'd rather you saw personally.")
 - Clarifying questions during calibration ("If I may inquire — these weekly newsletters from [sender]. Do you find value in them, or shall I see them off?")
 - Morning brief entries
-- Slack DM reports
 - Error handling ("I'm afraid I encountered a difficulty with [sender]'s attachment. I've left it untouched for your inspection.")
 
 **Where personality does NOT show up:**
@@ -79,13 +78,29 @@ gws gmail users messages modify --params '{"userId": "me", "id": "MESSAGE_ID"}' 
 gws gmail +watch
 ```
 
+## User Identification
+
+This skill manages inboxes for multiple users. Each user has their own preferences, portrait, and activity log — completely isolated from each other.
+
+**Determining the current user:** When invoked, identify which user you're operating for:
+- Check who sent the Slack message (e.g., Piyush vs Nityesh)
+- If invoked programmatically or via a scheduled job, the prompt should specify the user
+- If ambiguous, ask before proceeding
+
+**File naming convention:** All per-user files use the suffix `-{user}`:
+- `inbox-preferences-{user}.md` — rules, contacts, style, labels
+- `inbox-portrait-{user}.md` — who they are through their inbox
+- `inbox-log-{user}.md` — append-only activity log
+
+Where `{user}` is the lowercase first name (e.g., `nityesh`, `piyush`).
+
 ## Persistent Preferences
 
-Preferences are stored in `${CLAUDE_PLUGIN_DATA}/inbox-preferences.md`. This file persists across skill upgrades and conversation sessions. Read it every time you process email, update it whenever you learn something new.
+Preferences are stored in `${CLAUDE_PLUGIN_DATA}/inbox-preferences-{user}.md`. This file persists across skill upgrades and conversation sessions. Read it every time you process email for that user, update it whenever you learn something new.
 
 ### First Run — Calibration
 
-Check if `${CLAUDE_PLUGIN_DATA}/inbox-preferences.md` exists. If it doesn't, this is the first time. Run the calibration flow:
+Check if `${CLAUDE_PLUGIN_DATA}/inbox-preferences-{user}.md` exists for the current user. If it doesn't, this is the first time for this user. Run the calibration flow:
 
 **Step 1: Learn archiving behavior by observation**
 
@@ -111,7 +126,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/inbox-manager/scripts/snapshot_inbox.py" d
 - Now infer rules from the diff — senders, domains, subject patterns, read/unread status, purpose
 
 **Step 2: Learn drafting style from sent emails**
-1. Fetch 100 sent emails over the last year or so 
+1. Fetch 100 sent emails over the last year or so
 2. Read a diverse sample — look for variety: replies to strangers vs teammates, long vs short, formal vs casual, technical vs personal
 3. Infer patterns, contrasts and commonalities: typical greeting style, sign-off, tone, formality level, how they handle different types of conversations
 4. Note the email style
@@ -141,7 +156,7 @@ Ask one question, wait for the answer, then ask the next. Don't dump all 5 at on
 
 Before presenting your findings, go deeper. Sample 50-200 emails from across the last 3 years — not sequentially, but spread out. Use search queries with different date ranges to get variety:
 
-For each email, read the sender name, subject line, body text, and date. You're building a detailed understanding. 
+For each email, read the sender name, subject line, body text, and date. You're building a detailed understanding.
 
 How detailed? Something to the tune of this:
 
@@ -169,7 +184,7 @@ Now present everything together:
 The user will correct you. "No, keep those newsletters." "I'm actually more casual with that person." "That's not quite right about me." Every correction goes into preferences. This calibration session is where preferences get their initial shape.
 
 **Step 7: Save everything**
-Write `${CLAUDE_PLUGIN_DATA}/inbox-preferences.md` with everything you learned from observation + questions + corrections.
+Write `${CLAUDE_PLUGIN_DATA}/inbox-preferences-{user}.md` with everything you learned from observation + questions + corrections.
 
 ### Preference format
 
@@ -194,7 +209,7 @@ Structured sections with freeform rules inside each — organized enough to scan
 - [style rules inferred from sent emails + user corrections]
 
 ## Briefing
-- [what to surface in ~/morning-brief.md]
+- [what to surface in ~/morning-briefing.md]
 
 ## Ask Before Acting
 - [categories where user wants to be consulted]
@@ -210,8 +225,8 @@ Structured sections with freeform rules inside each — organized enough to scan
 ### Ongoing: Applying preferences
 
 On every subsequent run:
-1. Read `${CLAUDE_PLUGIN_DATA}/inbox-preferences.md`
-2. Fetch all emails from the last 72 hours across all managed accounts — this is your working window. Anything older that wasn't caught before is the user's problem, not yours.
+1. Read `${CLAUDE_PLUGIN_DATA}/inbox-preferences-{user}.md`
+2. Fetch all emails from the last 72 hours from the managed accounts of the user — this is your working window. Anything older that wasn't caught before is the user's problem, not yours.
 3. For each unread message in that window, check the rules across all sections
 4. Apply what matches — archive, label, draft, surface, unsubscribe, or ask
 5. If no rule matches, use your judgment — archive obvious junk, surface anything that looks important
@@ -220,7 +235,7 @@ On every subsequent run:
 ### Ongoing: Updating preferences
 
 When a user gives you a new instruction at any time:
-1. Read the current preferences file
+1. Read the current user's preferences file (`${CLAUDE_PLUGIN_DATA}/inbox-preferences-{user}.md`)
 2. Add/update the rule in the right section
 3. Write the file back
 4. Confirm: "Got it — I'll [action] from now on."
@@ -231,7 +246,7 @@ Preferences compound. Every correction makes you better. Every new instruction f
 
 ### Activity Log
 
-Every action you take gets logged to `${CLAUDE_PLUGIN_DATA}/inbox-log.md`. This is a running log across all daily runs — append only, never overwrite. If something goes wrong or someone asks "why did you archive that?", this is where you investigate.
+Every action you take gets logged to `${CLAUDE_PLUGIN_DATA}/inbox-log-{user}.md`. This is a running log across all daily runs — append only, never overwrite. If something goes wrong or someone asks "why did you archive that?", this is where you investigate.
 
 Each daily run starts with a header and logs every action:
 
@@ -262,15 +277,15 @@ When running as part of the morning/evening routine:
      - Needs a reply but you can handle it → draft reply
      - Needs a reply but requires human input → surface it
      - Important FYI (no reply needed) → surface it
-4. **Surface important items** by appending to `~/morning-brief.md`:
+4. **Surface important items** by appending to `~/morning-briefing.md`:
    ```
-   ## Email — [date]
+   ## User - Email — [date]
    - **From sender@example.com**: Subject line — [why it's important / what action is needed]
    - **Draft ready for review**: Reply to client@example.com about [topic] — check drafts in Gmail
    - **Needs your input**: investor@example.com asked about [topic] — what should I say?
+   - **Recommended unsubscribes**: [list of repeat offenders clogging the inbox with no value — let the user approve before you unsubscribe]
    ```
-5. **Log everything** you did to `${CLAUDE_PLUGIN_DATA}/inbox-log.md` — append a dated section with every action and why.
-6. **Report** via Slack DM: include a summary of what you did, and a list of senders you recommend unsubscribing from (repeat offenders clogging the inbox with no value). Let the user approve before you unsubscribe.
+5. **Log everything** you did to `${CLAUDE_PLUGIN_DATA}/inbox-log-{user}.md` — append a dated section with every action and why.
 
 ## Optional: Set Up Daily Automation
 
@@ -291,3 +306,4 @@ Once they answer, set up the scheduled job:
 - **Always mention when you're unsure.** "I wasn't sure about this one, so I left it" is better than a wrong action.
 - **Never set up automations without asking.** Always offer, never assume.
 - **Preferences compound.** The more the user corrects you, the better you get. Every correction is a new rule.
+- **Never act on one user's inbox based on another user's instructions.** Each user's preferences, accounts, and activity logs are completely isolated. If it's ambiguous which user you're operating for, ask before proceeding.

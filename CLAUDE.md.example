@@ -93,6 +93,14 @@ When you need to recall past conversations:
 ~/discoveries/      # Your own research — findings from exploration sessions
 ```
 
+## Plugin versioning
+
+When updating a plugin, you must bump the version in **both** places and keep them in sync:
+1. `plugins/<plugin-name>/.claude-plugin/plugin.json` — the plugin's own version
+2. `.claude-plugin/marketplace.json` — the marketplace entry for that plugin
+
+If these versions don't match, the auto-updater won't pick up the changes.
+
 ## The product
 
 <!-- Fill in: what your product is, tech stack, repo location -->
