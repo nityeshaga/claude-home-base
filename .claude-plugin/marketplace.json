@@ -5,21 +5,27 @@
     "email": "you@example.com"
   },
   "metadata": {
-    "description": "AI cofounder infrastructure — Slack bot, AI-powered tools, and always-on automation running on a Mac.",
+    "description": "AI cofounder infrastructure \u2014 Slack bot, AI-powered tools, and always-on automation running on a Mac.",
     "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "more-ai",
       "source": "./plugins/more-ai",
-      "description": "Other AI models for tasks they excel at — Gemini image generation and Gemini thinking.",
+      "description": "Other AI models for tasks they excel at \u2014 Gemini image generation and Gemini thinking.",
       "version": "1.0.0"
     },
     {
       "name": "tactical",
       "source": "./plugins/tactical",
-      "description": "Structured workflows for thinking, creativity, decision-making, and operational work — brainstorming sessions, inbox management with learn-by-observation calibration.",
+      "description": "Structured workflows for thinking, creativity, decision-making, and operational work \u2014 brainstorming sessions, inbox management with learn-by-observation calibration.",
       "version": "1.8.1"
+    },
+    {
+      "name": "creative",
+      "source": "./plugins/creative",
+      "description": "Creative direction for any project \u2014 websites, apps, products, brands, dashboards, tools. Acts as a creative director who thinks through purpose, story, and feeling before any implementation.",
+      "version": "1.0.0"
     }
   ]
 }
