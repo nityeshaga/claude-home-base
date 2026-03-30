@@ -70,6 +70,15 @@ $PYTHON "${SCRIPTS_DIR}/multi_turn_chat.py" [--model MODEL] [--output-dir DIR]
 | `--aspect` | 1:1, 1:4, 1:8, 2:3, 3:2, 3:4, 4:1, 4:3, 4:5, 5:4, 8:1, 9:16, 16:9, 21:9 |
 | `--size` | 512 (3.1 flash only), 1K, 2K, 4K (pro only) |
 
+### remove_bg.py - Remove image backgrounds
+**Use when:** User wants to remove the background from an image (uses macOS Shortcuts)
+
+```bash
+$PYTHON "${SCRIPTS_DIR}/remove_bg.py" input.jpg [output.png]
+```
+
+If no output path is given, saves to `input_nobg.png` in the same folder. Requires a one-time setup of a macOS Shortcut named "Remove Background" — the script will print setup instructions if the shortcut is missing.
+
 ## Prompting Tips
 
 Write prompts like Midjourney experts - be detailed and specific:
