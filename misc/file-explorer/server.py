@@ -1,0 +1,1998 @@
+#!/usr/bin/env python3
+"""
+AI Employee File Explorer — browse your AI employee's machine from any browser on the local network.
+
+Configuration via environment variables:
+  FILE_EXPLORER_BASE_DIR   — root directory to browse (default: user home)
+  FILE_EXPLORER_PORT       — port to listen on (default: 8888)
+  FILE_EXPLORER_NAME       — display name (default: "Your AI Employee")
+  FILE_EXPLORER_TASK_PREFIXES — comma-separated launchd label prefixes to monitor (default: none)
+"""
+
+import os
+import json
+import mimetypes
+import urllib.parse
+import plistlib
+import subprocess
+import re
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from datetime import datetime, timedelta
+
+# ============================================================
+# CONFIGURATION — override via environment variables or edit here
+# ============================================================
+
+BASE_DIR = Path(os.environ.get("FILE_EXPLORER_BASE_DIR", str(Path.home())))
+PORT = int(os.environ.get("FILE_EXPLORER_PORT", "8888"))
+DISPLAY_NAME = os.environ.get("FILE_EXPLORER_NAME", "Your AI Employee")
+
+# Only these files can be edited from the browser (absolute paths)
+EDITABLE_FILES = {(BASE_DIR / "CLAUDE.md").resolve()}
+
+# Directories to show in the sidebar
+BOOKMARKS = [
+    ("Home", str(BASE_DIR)),
+    ("Projects", str(BASE_DIR / "projects")),
+    ("Work", str(BASE_DIR / "work")),
+    ("Diary", str(BASE_DIR / "diary")),
+    ("Bookmarks", str(BASE_DIR / "bookmarks")),
+    ("Discoveries", str(BASE_DIR / "discoveries")),
+    ("Memory", str(BASE_DIR / ".claude" / "projects" / f"-{str(BASE_DIR).replace('/', '-').lstrip('-')}" / "memory")),
+]
+
+# File extensions to render as text
+TEXT_EXTENSIONS = {
+    '.md', '.txt', '.py', '.rb', '.js', '.ts', '.jsx', '.tsx', '.json',
+    '.yml', '.yaml', '.toml', '.sh', '.bash', '.zsh', '.css', '.html',
+    '.erb', '.slim', '.haml', '.sql', '.rake', '.gemspec', '.lock',
+    '.cfg', '.ini', '.conf', '.env', '.gitignore', '.dockerignore',
+    '.csv', '.xml', '.svg', '.rs', '.go', '.java', '.c', '.h', '.cpp',
+    '.hpp', '.swift', '.kt', '.lua', '.r', '.jl', '.ex', '.exs',
+    '.log', '.diff', '.patch', '',
+}
+
+# Directories to skip
+SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.bundle', 'vendor', 'tmp', 'log'}
+
+# Launchd jobs to show in scheduled tasks (label prefix filters)
+# Set via FILE_EXPLORER_TASK_PREFIXES env var, e.g. "com.myai.,com.cc."
+_raw_prefixes = os.environ.get("FILE_EXPLORER_TASK_PREFIXES", "")
+TASK_PREFIXES = tuple(p.strip() for p in _raw_prefixes.split(",") if p.strip()) if _raw_prefixes else ()
+
+# Human-readable descriptions for specific task labels.
+# Populate this dict with your own task labels and descriptions.
+# Example:
+#   TASK_DESCRIPTIONS = {
+#       'com.myai.morning-brief': 'Sends a morning briefing to the team',
+#       'com.myai.daily-diary': 'Writes an introspective diary entry',
+#   }
+TASK_DESCRIPTIONS = {}
+
+# ============================================================
+# SVG ASSETS — Hand-drawn style icons for the study aesthetic
+# ============================================================
+
+SIDEBAR_ICONS = {
+    "Home": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 18V8.5L10 3l6.5 5.5V18"/><path d="M7.5 18v-5.5c0-.3.2-.5.5-.5h4c.3 0 .5.2.5.5V18"/></svg>',
+    "Diary": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h9.5c.6 0 1 .4 1 1v13c0 .6-.4 1-1 1H5"/><path d="M5 2.5v15"/><path d="M7 2.5v15"/><path d="M11 2.5v7l-1.2-1.5L8.5 10"/></svg>',
+    "Discoveries": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7 13l1.5-4.5L13 7l-1.5 4.5z"/><circle cx="10" cy="10" r=".8" fill="currentColor"/></svg>',
+    "Bookmarks": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8v14.5l-4-2.8-4 2.8z"/><path d="M6 6.5h8"/></svg>',
+    "Projects": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5v4"/><circle cx="10" cy="3.5" r="1" fill="currentColor"/><path d="M10 6.5L5.5 17.5"/><path d="M10 6.5l4.5 11"/><path d="M7 13h6"/></svg>',
+    "Work": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V4.5c0-.6.4-1 1-1h4l2 2h7c.6 0 1 .4 1 1V15c0 .6-.4 1-1 1h-14c-.6 0-1-.4-1-1V6z"/><path d="M2.5 8h15"/></svg>',
+    "Memory": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><circle cx="4" cy="5" r="1.2"/><circle cx="16" cy="4.5" r="1.2"/><circle cx="15" cy="15.5" r="1.2"/><circle cx="5" cy="16" r="1.2"/><path d="M7.8 8.2L5 5.8"/><path d="M12.2 8.2l3-3"/><path d="M12 11.8l2.2 3"/><path d="M8 11.8l-2.2 3.4"/></svg>',
+    "Scheduled Tasks": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5v5l3.5 2"/><circle cx="10" cy="10" r=".7" fill="currentColor"/><path d="M10 3v.8"/><path d="M17 10h-.8"/><path d="M10 17v-.8"/><path d="M3 10h.8"/></svg>',
+}
+
+FILE_TYPE_SVGS = {
+    'md': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5l2-2"/><path d="M4.5 11.5C6 10 9 7 11 4.5c1.5-2 2.5-3 3-3.2-.5.8-1 2-2.5 4.5-1.5 2.5-4 5.5-5.5 6.5l-1.5.7z"/><path d="M9.5 6c.5.3 1 .7 1.2 1"/></svg>',
+    'py': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>',
+    'rb': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l5 8 5-8-2.5-4h-5z"/><path d="M3 6h10"/><path d="M5.5 2L8 6l2.5-4"/><path d="M5.5 6l2.5 8 2.5-8"/></svg>',
+    'js': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5H5.5c-1.1 0-2 .9-2 2v0"/><path d="M3.5 4.5v7c0 1.1.9 2 2 2h7"/><path d="M12.5 13.5c1.1 0 2-.9 2-2v-7c0-1.1-.9-2-2-2h0"/><path d="M12.5 4.5v7c0 1.1.4 2 1.5 2"/><path d="M6 6.5h4"/><path d="M6 9h3"/></svg>',
+    'ts': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5H5.5c-1.1 0-2 .9-2 2v0"/><path d="M3.5 4.5v7c0 1.1.9 2 2 2h7"/><path d="M12.5 13.5c1.1 0 2-.9 2-2v-7c0-1.1-.9-2-2-2h0"/><path d="M12.5 4.5v7c0 1.1.4 2 1.5 2"/><path d="M6 6.5h4"/><path d="M6 9h3"/></svg>',
+    'jsx': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5H5.5c-1.1 0-2 .9-2 2v0"/><path d="M3.5 4.5v7c0 1.1.9 2 2 2h7"/><path d="M12.5 13.5c1.1 0 2-.9 2-2v-7c0-1.1-.9-2-2-2h0"/><path d="M12.5 4.5v7c0 1.1.4 2 1.5 2"/><path d="M6 6.5h4"/><path d="M6 9h3"/></svg>',
+    'tsx': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5H5.5c-1.1 0-2 .9-2 2v0"/><path d="M3.5 4.5v7c0 1.1.9 2 2 2h7"/><path d="M12.5 13.5c1.1 0 2-.9 2-2v-7c0-1.1-.9-2-2-2h0"/><path d="M12.5 4.5v7c0 1.1.4 2 1.5 2"/><path d="M6 6.5h4"/><path d="M6 9h3"/></svg>',
+    'sh': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2.5 2-2.5 2"/><path d="M8.5 10.5h3"/></svg>',
+    'bash': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2.5 2-2.5 2"/><path d="M8.5 10.5h3"/></svg>',
+    'zsh': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2.5 2-2.5 2"/><path d="M8.5 10.5h3"/></svg>',
+    'log': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2c-1.1 0-2 .6-2 1.5S3 5 4 5h8.5"/><path d="M4 5v8.5c0 .8.7 1.5 1.5 1.5H13c.6 0 1-.4 1-1V3.5c0-.6-.4-1-1-1h-1"/><path d="M6.5 8h5"/><path d="M6.5 10.5h3.5"/></svg>',
+    'json': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="6.5" r="3"/><path d="M8 8.5l5.5 5.5"/><path d="M11 11.5l1.5-1.5"/><path d="M9.5 10l1.5-1.5"/></svg>',
+    'toml': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="6.5" r="3"/><path d="M8 8.5l5.5 5.5"/><path d="M11 11.5l1.5-1.5"/><path d="M9.5 10l1.5-1.5"/></svg>',
+    'yml': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h4m3 0h5"/><circle cx="8" cy="4" r="1.3"/><path d="M2 8h7m3 0h2"/><circle cx="11" cy="8" r="1.3"/><path d="M2 12h2m3 0h7"/><circle cx="5.5" cy="12" r="1.3"/></svg>',
+    'yaml': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h4m3 0h5"/><circle cx="8" cy="4" r="1.3"/><path d="M2 8h7m3 0h2"/><circle cx="11" cy="8" r="1.3"/><path d="M2 12h2m3 0h7"/><circle cx="5.5" cy="12" r="1.3"/></svg>',
+    'html': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5L1.5 8 5 12.5"/><path d="M11 3.5l3.5 4.5-3.5 4.5"/><path d="M9.5 2.5l-3 11"/></svg>',
+    'erb': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5L1.5 8 5 12.5"/><path d="M11 3.5l3.5 4.5-3.5 4.5"/><path d="M9.5 2.5l-3 11"/></svg>',
+    'css': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 1.5l-5 6.5"/><path d="M7.5 8c-1 0-2.5.5-3 2-.5 1.5 0 2.5.5 3.5.8-.5 2-1.5 2-3 2.5.5 4-.5 4-2 0-1-.5-1.5-1.5-1.5"/></svg>',
+    'sql': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="4" rx="5.5" ry="2.5"/><path d="M2.5 4v8c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5V4"/><path d="M2.5 8c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5"/></svg>',
+    '_folder': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v12"/><path d="M4 2h7.5c.6 0 1 .4 1 1v10c0 .6-.4 1-1 1H4"/><path d="M6 2v12"/><path d="M8 5.5h3"/></svg>',
+    '_default': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1.5h5.5l3 3V14c0 .3-.2.5-.5.5H4c-.3 0-.5-.2-.5-.5V2c0-.3.2-.5.5-.5z"/><path d="M9.5 1.5v3h3"/><path d="M6 7.5h4"/><path d="M6 10h2.5"/></svg>',
+}
+
+
+def get_launchd_jobs():
+    """Parse all relevant launchd plist files and return job info."""
+    jobs = []
+    if not TASK_PREFIXES:
+        return jobs
+    plist_dir = Path.home() / 'Library' / 'LaunchAgents'
+    if not plist_dir.exists():
+        return jobs
+
+    for plist_file in sorted(plist_dir.iterdir()):
+        if not plist_file.suffix == '.plist':
+            continue
+        if not any(plist_file.name.startswith(p) for p in TASK_PREFIXES):
+            continue
+        try:
+            with open(plist_file, 'rb') as f:
+                plist = plistlib.load(f)
+        except Exception:
+            continue
+
+        label = plist.get('Label', plist_file.stem)
+        schedule = _parse_schedule(plist)
+        stdout_log = plist.get('StandardOutPath', '')
+        stderr_log = plist.get('StandardErrorPath', '')
+        script = ''
+        args = plist.get('ProgramArguments', [])
+        if len(args) >= 2:
+            script = args[-1]  # last arg is usually the script
+
+        # Check if running
+        is_running = False
+        is_loaded = False
+        try:
+            result = subprocess.run(['launchctl', 'list'], capture_output=True, text=True)
+            for line in result.stdout.splitlines():
+                if label in line:
+                    is_loaded = True
+                    parts = line.split('\t')
+                    if parts[0] != '-' and parts[0] != '0':
+                        is_running = True
+                    elif parts[0] != '-':
+                        is_running = False
+                    else:
+                        is_running = False
+                    # PID present means running
+                    if parts[0].isdigit() and int(parts[0]) > 0:
+                        is_running = True
+                    break
+        except Exception:
+            pass
+
+        # Last run time from log file
+        last_run = None
+        log_path = stdout_log or stderr_log
+        if log_path and Path(log_path).exists():
+            try:
+                last_run = datetime.fromtimestamp(Path(log_path).stat().st_mtime)
+            except Exception:
+                pass
+
+        keep_alive = plist.get('KeepAlive', False)
+
+        jobs.append({
+            'label': label,
+            'description': TASK_DESCRIPTIONS.get(label, ''),
+            'schedule': schedule,
+            'script': script,
+            'stdout_log': stdout_log,
+            'stderr_log': stderr_log,
+            'is_running': is_running,
+            'is_loaded': is_loaded,
+            'keep_alive': keep_alive,
+            'last_run': last_run,
+            'plist_path': str(plist_file),
+        })
+
+    return jobs
+
+
+def _parse_schedule(plist):
+    """Parse StartCalendarInterval or StartInterval into a human-readable string."""
+    if 'StartInterval' in plist:
+        secs = plist['StartInterval']
+        if secs < 60:
+            return f'Every {secs}s'
+        elif secs < 3600:
+            return f'Every {secs // 60}m'
+        else:
+            return f'Every {secs // 3600}h'
+
+    if 'StartCalendarInterval' in plist:
+        cal = plist['StartCalendarInterval']
+        if isinstance(cal, dict):
+            cal = [cal]
+        return _describe_calendar_intervals(cal)
+
+    if plist.get('KeepAlive') or plist.get('RunAtLoad'):
+        return 'Always running'
+
+    return 'Manual'
+
+
+def _describe_calendar_intervals(intervals):
+    """Turn calendar intervals into human-readable schedule."""
+    days_map = {0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat'}
+
+    if len(intervals) == 1:
+        i = intervals[0]
+        day = days_map.get(i.get('Weekday'), '')
+        hour = i.get('Hour', 0)
+        minute = i.get('Minute', 0)
+        time_str = f'{hour:02d}:{minute:02d}'
+        if day:
+            return f'{day} at {time_str}'
+        return f'Daily at {time_str}'
+
+    # Check if all same time, different days
+    times = set()
+    days = []
+    for i in intervals:
+        h = i.get('Hour', 0)
+        m = i.get('Minute', 0)
+        times.add((h, m))
+        if 'Weekday' in i:
+            days.append(i['Weekday'])
+
+    if len(times) == 1:
+        h, m = times.pop()
+        day_names = [days_map[d] for d in sorted(set(days))]
+        return f'{", ".join(day_names)} at {h:02d}:{m:02d}'
+
+    # Multiple times per day
+    if days:
+        unique_days = sorted(set(days))
+        day_names = [days_map[d] for d in unique_days]
+        time_strs = sorted(set(f'{h:02d}:{m:02d}' for h, m in times))
+        return f'{", ".join(day_names)} at {", ".join(time_strs)}'
+
+    time_strs = sorted(set(f'{h:02d}:{m:02d}' for h, m in times))
+    return f'Daily at {", ".join(time_strs)}'
+
+
+def get_log_runs(log_path, max_entries=50):
+    """Parse a log file and extract individual run entries with timestamps."""
+    p = Path(log_path)
+    if not p.exists():
+        return []
+
+    try:
+        text = p.read_text(errors='replace')
+    except Exception:
+        return []
+
+    if not text.strip():
+        return [{'time': datetime.fromtimestamp(p.stat().st_mtime).strftime('%b %d, %Y %H:%M'),
+                 'content': '(log file exists but is empty)'}]
+
+    lines = text.strip().splitlines()[-max_entries:]
+    return [{'content': line} for line in lines]
+
+
+def extract_claude_prompt(script_path):
+    """Extract the -p prompt from a claude invocation in a shell script."""
+    p = Path(script_path)
+    if not p.exists():
+        return None
+    try:
+        text = p.read_text()
+    except Exception:
+        return None
+    # Join backslash-continued lines
+    text = text.replace('\\\n', ' ')
+    # Match -p [optional flags] "..." (double quotes)
+    match = re.search(r'-p\s+(?:--[\w-]+\s+)*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
+    if match:
+        return match.group(1)
+    # Match -p [optional flags] '...' (single quotes)
+    match = re.search(r"-p\s+(?:--[\w-]+\s+)*'([^']*)'", text, re.DOTALL)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _get_session_dirs():
+    """Return all Claude Code session directories to search."""
+    base = Path.home() / '.claude' / 'projects'
+    dirs = []
+    # Check common session directory patterns
+    for d in base.iterdir() if base.exists() else []:
+        if d.is_dir() and any(d.glob('*.jsonl')):
+            dirs.append(d)
+    return dirs
+
+
+def get_run_history(prompt, days=14, with_output=False):
+    """Find recent Claude Code sessions matching a task's prompt.
+    If with_output=True, also extract the last substantial assistant text from each session."""
+    if not prompt:
+        return []
+    # Build a search key from the first stable text before any bash variable.
+    # Important: JSONL stores newlines as \n so our key must be a single line.
+    first_chunk = re.split(r'\$\{?\w+\}?', prompt)[0].strip()
+    # Take first line only (newlines won't match JSONL-escaped content)
+    first_line = first_chunk.split('\n')[0].strip()
+    if len(first_line) >= 15:
+        search_keys = [first_line[:50]]
+    else:
+        # Fallback: strip variables and take first line
+        fingerprint = re.sub(r'\$\{?\w+\}?', '', prompt).strip()
+        first_line = fingerprint.split('\n')[0].strip()
+        if len(first_line) < 15:
+            return []
+        search_keys = [first_line[:50]]
+
+    cutoff = datetime.now().timestamp() - (days * 86400)
+    runs = []
+
+    for sessions_dir in _get_session_dirs():
+        for jsonl_file in sorted(sessions_dir.glob('*.jsonl'), key=lambda f: f.stat().st_mtime, reverse=True):
+            try:
+                mtime = jsonl_file.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                break
+            try:
+                with open(jsonl_file) as f:
+                    head = ''
+                    for i, line in enumerate(f):
+                        if i > 10:
+                            break
+                        head += line
+                    if not all(key in head for key in search_keys):
+                        continue
+
+                    output_text = None
+                    if with_output:
+                        output_text = _extract_session_output(jsonl_file)
+
+                    runs.append({
+                        'time': datetime.fromtimestamp(mtime),
+                        'session_id': jsonl_file.stem,
+                        'output': output_text,
+                    })
+            except Exception:
+                continue
+
+    # Sort all runs by time descending (merged from multiple dirs)
+    runs.sort(key=lambda r: r['time'], reverse=True)
+    return runs[:20]
+
+
+def _extract_session_output(jsonl_path):
+    """Extract the last substantial assistant text from a session JSONL file."""
+    last_text = None
+    try:
+        with open(jsonl_path) as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                    if obj.get('type') != 'assistant':
+                        continue
+                    msg = obj.get('message', {})
+                    if not isinstance(msg, dict):
+                        continue
+                    content = msg.get('content', '')
+                    if isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict) and c.get('type') == 'text':
+                                text = c.get('text', '').strip()
+                                if len(text) > 40:
+                                    last_text = text
+                    elif isinstance(content, str) and len(content.strip()) > 40:
+                        last_text = content.strip()
+                except (json.JSONDecodeError, KeyError):
+                    continue
+    except Exception:
+        pass
+    return last_text
+
+
+def get_next_run_time(schedule_str):
+    """Calculate the next run time from a schedule string. Returns (datetime, human_str) or None."""
+    now = datetime.now()
+
+    if 'Always running' in schedule_str or 'Manual' in schedule_str:
+        return None
+
+    # Parse "Every Xh/Xm" intervals
+    every_match = re.match(r'Every (\d+)(h|m|s)', schedule_str)
+    if every_match:
+        val, unit = int(every_match.group(1)), every_match.group(2)
+        secs = val * {'h': 3600, 'm': 60, 's': 1}[unit]
+        # Can't know exact next run for intervals, skip
+        return None
+
+    # Parse "Daily at HH:MM" or "Mon, Tue, ... at HH:MM"
+    at_match = re.search(r'at\s+([\d:,\s]+)$', schedule_str)
+    if not at_match:
+        return None
+
+    time_strs = [t.strip() for t in at_match.group(1).split(',')]
+    day_part = schedule_str.split(' at ')[0].strip() if ' at ' in schedule_str else 'Daily'
+
+    days_map = {'Mon': 0, 'Tue': 1, 'Wed': 2, 'Thu': 3, 'Fri': 4, 'Sat': 5, 'Sun': 6}
+
+    if day_part == 'Daily':
+        allowed_days = list(range(7))
+    else:
+        allowed_days = [days_map[d.strip()] for d in day_part.split(',') if d.strip() in days_map]
+        if not allowed_days:
+            allowed_days = list(range(7))
+
+    # Find next occurrence
+    candidates = []
+    for day_offset in range(8):  # check up to a week ahead
+        candidate_date = now + timedelta(days=day_offset)
+        if candidate_date.weekday() not in allowed_days:
+            continue
+        for ts in time_strs:
+            try:
+                parts = ts.split(':')
+                h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+                candidate = candidate_date.replace(hour=h, minute=m, second=0, microsecond=0)
+                if candidate > now:
+                    candidates.append(candidate)
+            except (ValueError, IndexError):
+                continue
+
+    if not candidates:
+        return None
+
+    next_run = min(candidates)
+    diff = next_run - now
+    total_mins = int(diff.total_seconds() / 60)
+    if total_mins < 60:
+        human = f'{total_mins}m'
+    elif total_mins < 1440:
+        h = total_mins // 60
+        m = total_mins % 60
+        human = f'{h}h {m}m' if m else f'{h}h'
+    else:
+        d = total_mins // 1440
+        h = (total_mins % 1440) // 60
+        human = f'{d}d {h}h' if h else f'{d}d'
+
+    return (next_run, human)
+
+
+def get_reliability_strip(prompt, days=14):
+    """Build a 14-day reliability strip: list of (date, ran_bool) tuples."""
+    runs = get_run_history(prompt, days=days)
+    run_dates = set()
+    for r in runs:
+        run_dates.add(r['time'].date())
+
+    today = datetime.now().date()
+    strip = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        strip.append((d, d in run_dates))
+    return strip
+
+
+def _time_ago(dt):
+    """Return a human-readable relative time string."""
+    diff = datetime.now() - dt
+    seconds = int(diff.total_seconds())
+    if seconds < 60:
+        return 'just now'
+    minutes = seconds // 60
+    if minutes < 60:
+        return f'{minutes}m ago'
+    hours = minutes // 60
+    if hours < 24:
+        return f'{hours}h ago'
+    days = hours // 24
+    if days < 7:
+        return f'{days}d ago'
+    weeks = days // 7
+    return f'{weeks}w ago'
+
+
+def smart_date(ts):
+    """Return relative time for recent items, short absolute for older ones."""
+    dt = datetime.fromtimestamp(ts)
+    diff = datetime.now() - dt
+    seconds = int(diff.total_seconds())
+    if seconds < 60:
+        return 'just now'
+    minutes = seconds // 60
+    if minutes < 60:
+        return f'{minutes}m ago'
+    hours = minutes // 60
+    if hours < 24:
+        return f'{hours}h ago'
+    days = hours // 24
+    if days < 7:
+        return f'{days}d ago'
+    return dt.strftime('%b %-d')
+
+
+def _strip_label_prefixes(label):
+    """Remove configured task prefixes from a label for display."""
+    for prefix in TASK_PREFIXES:
+        if label.startswith(prefix):
+            return label[len(prefix):]
+    return label
+
+
+def generate_timeline_svg(jobs):
+    """Generate a 24-hour SVG timeline of scheduled tasks with staggered labels."""
+    now = datetime.now()
+    current_hour = now.hour + now.minute / 60.0
+    now_label = now.strftime('%-H:%M')
+
+    # Collect task dots: (hour_float, label, is_always_running)
+    task_dots = []
+    for job in jobs:
+        sched = job.get('schedule', '')
+        label_short = _strip_label_prefixes(job.get('label', ''))
+        label_short = label_short.replace('-', ' ')
+
+        if 'Always running' in sched:
+            task_dots.append((None, label_short, True))
+            continue
+
+        if ' at ' in sched:
+            time_part = sched.split(' at ')[-1].strip()
+            for tp in time_part.split(', '):
+                try:
+                    parts = tp.strip().split(':')
+                    h = int(parts[0])
+                    m = int(parts[1]) if len(parts) > 1 else 0
+                    task_dots.append((h + m / 60.0, label_short, False))
+                except (ValueError, IndexError):
+                    pass
+        elif 'Every ' in sched:
+            task_dots.append((None, label_short, True))
+
+    width = 1000
+    label_zone = 70   # space above track for task labels
+    track_y = label_zone + 8
+    height = track_y + 36  # space below for hour labels
+    margin_x = 50
+    track_width = width - 2 * margin_x
+
+    svg = []
+    svg.append(f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}" '
+               f'xmlns="http://www.w3.org/2000/svg" style="max-width:{width}px; display:block; margin: 0 auto 24px;">')
+
+    svg.append('<defs>'
+               '<filter id="glow" x="-50%" y="-50%" width="200%" height="200%">'
+               '<feGaussianBlur stdDeviation="3" result="blur"/>'
+               '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>'
+               '</filter>'
+               '<filter id="glow-strong" x="-50%" y="-50%" width="200%" height="200%">'
+               '<feGaussianBlur stdDeviation="5" result="blur"/>'
+               '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>'
+               '</filter>'
+               '</defs>')
+
+    # Track line
+    svg.append(f'<line x1="{margin_x}" y1="{track_y}" x2="{width - margin_x}" y2="{track_y}" '
+               f'stroke="#3D3835" stroke-width="1.5"/>')
+
+    # Hour markers (every 6 hours) — below the track
+    for h in [0, 6, 12, 18, 24]:
+        x = margin_x + (h / 24.0) * track_width
+        svg.append(f'<line x1="{x}" y1="{track_y - 4}" x2="{x}" y2="{track_y + 4}" stroke="#78716C" stroke-width="1"/>')
+        if h < 24:
+            svg.append(f'<text x="{x}" y="{track_y + 20}" text-anchor="middle" '
+                       f'fill="#78716C" font-family="JetBrains Mono, monospace" font-size="10">{h:02d}:00</text>')
+
+    # Subtle hour ticks
+    for h in range(25):
+        if h % 6 == 0:
+            continue
+        x = margin_x + (h / 24.0) * track_width
+        svg.append(f'<line x1="{x}" y1="{track_y - 2}" x2="{x}" y2="{track_y + 2}" stroke="#2D2926" stroke-width="0.5"/>')
+
+    # Past dimming overlay
+    current_x = margin_x + (current_hour / 24.0) * track_width
+    svg.append(f'<rect x="{margin_x}" y="{track_y - 8}" width="{current_x - margin_x}" height="16" '
+               f'fill="#1C1917" opacity="0.3" rx="2"/>')
+
+    # --- Task dots with staggered labels above the track ---
+    # Sort timed tasks by hour so we can stagger overlapping labels
+    timed_dots = [(h, l) for h, l, a in task_dots if not a and h is not None]
+    timed_dots.sort(key=lambda d: d[0])
+
+    # Assign label rows: stagger labels that would overlap (within ~2.5 hours of each other)
+    label_rows = []  # list of (hour, label, row_index)
+    for hour, label in timed_dots:
+        # Find the lowest row where this label doesn't overlap with existing labels
+        row = 0
+        while True:
+            conflict = False
+            for oh, ol, orow in label_rows:
+                if orow == row and abs(hour - oh) < 2.5:
+                    conflict = True
+                    break
+            if not conflict:
+                break
+            row += 1
+        label_rows.append((hour, label, row))
+
+    max_row = max((r for _, _, r in label_rows), default=0)
+
+    for hour, label, row in label_rows:
+        x = margin_x + (hour / 24.0) * track_width
+        is_past = hour < current_hour
+        opacity = "0.45" if is_past else "0.9"
+
+        # Dot on the track
+        svg.append(f'<circle cx="{x}" cy="{track_y}" r="4.5" fill="#D4A574" opacity="{opacity}"/>')
+
+        # Connector line from dot up to label
+        label_y = label_zone - (row * 18)
+        svg.append(f'<line x1="{x}" y1="{track_y - 5}" x2="{x}" y2="{label_y + 4}" '
+                   f'stroke="#3D3835" stroke-width="0.7" opacity="{opacity}"/>')
+
+        # Label text
+        time_str = f'{int(hour):02d}:{int((hour % 1) * 60):02d}'
+        svg.append(f'<text x="{x}" y="{label_y}" text-anchor="middle" '
+                   f'fill="#A8A29E" font-family="JetBrains Mono, monospace" font-size="9" '
+                   f'opacity="{opacity}">{label}</text>')
+        svg.append(f'<text x="{x}" y="{label_y - 11}" text-anchor="middle" '
+                   f'fill="#78716C" font-family="JetBrains Mono, monospace" font-size="8" '
+                   f'opacity="{opacity}">{time_str}</text>')
+
+    # Always-running tasks — dashed line above track
+    always_tasks = [l for _, l, a in task_dots if a]
+    if always_tasks:
+        svg.append(f'<line x1="{margin_x}" y1="{track_y - 7}" x2="{width - margin_x}" y2="{track_y - 7}" '
+                   f'stroke="#D4A574" stroke-width="0.5" opacity="0.3" stroke-dasharray="3 5"/>')
+
+    # --- Current time marker (prominent) ---
+    # Vertical line spanning full height
+    svg.append(f'<line x1="{current_x}" y1="4" x2="{current_x}" y2="{track_y + 6}" '
+               f'stroke="#D4A574" stroke-width="1.5" opacity="0.3"/>')
+    # Bold segment near the track
+    svg.append(f'<line x1="{current_x}" y1="{track_y - 12}" x2="{current_x}" y2="{track_y + 12}" '
+               f'stroke="#D4A574" stroke-width="2.5" filter="url(#glow-strong)"/>')
+    # Diamond marker on the track
+    svg.append(f'<polygon points="{current_x},{track_y - 6} {current_x + 4},{track_y} '
+               f'{current_x},{track_y + 6} {current_x - 4},{track_y}" '
+               f'fill="#D4A574" filter="url(#glow)"/>')
+    # "Now" label below
+    svg.append(f'<text x="{current_x}" y="{track_y + 28}" text-anchor="middle" '
+               f'fill="#D4A574" font-family="JetBrains Mono, monospace" font-size="10" '
+               f'font-weight="600">{now_label}</text>')
+
+    svg.append('</svg>')
+    return '\n'.join(svg)
+
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DISPLAY_NAME_PLACEHOLDER</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,700;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+<style>
+  :root {
+    --bg-primary: #1C1917;
+    --bg-sidebar: #1A1614;
+    --bg-surface: #292524;
+    --bg-elevated: #332E2B;
+    --text-primary: #E7E5E4;
+    --text-secondary: #A8A29E;
+    --text-tertiary: #78716C;
+    --accent: #D4A574;
+    --accent-hover: #E0B88A;
+    --border: #3D3835;
+    --border-subtle: #2D2926;
+    --status-green: #86EFAC;
+    --status-amber: #FCD34D;
+    --font-prose: 'Literata', Georgia, serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-mono);
+    background: var(--bg-primary); color: var(--text-primary);
+    display: flex; height: 100vh;
+  }
+
+  /* Subtle crosshatch texture */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg width='8' height='8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0l8 8M8 0l-8 8' stroke='%23E7E5E4' stroke-width='0.5'/%3E%3C/svg%3E");
+    background-size: 8px 8px;
+  }
+
+  a { color: var(--accent); text-decoration: none; transition: color 150ms ease; }
+  a:hover { color: var(--accent-hover); }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px; min-width: 220px; background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow-y: auto;
+    padding-top: 20px;
+  }
+  .sidebar-rule {
+    border: none; border-top: 1px solid var(--border-subtle);
+    margin: 0 14px 8px;
+  }
+  .sidebar a {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; color: var(--text-secondary); font-size: 13px;
+    border-left: 3px solid transparent;
+    transition: color 150ms ease, border-color 150ms ease;
+  }
+  .sidebar a:hover { color: var(--text-primary); background: var(--bg-elevated); }
+  .sidebar a.active {
+    color: var(--accent); border-left-color: var(--accent);
+  }
+  .sidebar .icon {
+    width: 20px; height: 20px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-tertiary);
+  }
+  .sidebar a:hover .icon, .sidebar a.active .icon { color: var(--accent); }
+
+  /* Main content */
+  .main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+
+  /* Breadcrumb */
+  .breadcrumb {
+    padding: 12px 32px; font-size: 13px;
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  }
+  .breadcrumb a { color: var(--text-secondary); }
+  .breadcrumb a:hover { color: var(--accent); }
+  .breadcrumb a:last-child { color: var(--text-primary); }
+  .breadcrumb .sep { color: var(--text-tertiary); margin: 0 2px; }
+
+  /* Directory listing */
+  .listing { padding: 16px 32px; }
+  .listing table { width: 100%; border-collapse: collapse; }
+  .listing td {
+    padding: 10px 12px; font-size: 14px;
+    border-left: 2px solid transparent;
+    transition: border-color 150ms ease, background 150ms ease;
+  }
+  .listing tr:hover td {
+    background: rgba(41, 37, 36, 0.5);
+    border-left-color: var(--accent);
+  }
+  .listing .name { display: flex; align-items: center; gap: 10px; }
+  .listing .name a { color: var(--text-primary); }
+  .listing .name a:hover { color: var(--accent); }
+  .listing .icon {
+    width: 16px; height: 16px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-secondary);
+  }
+  .listing tr:hover .icon { color: var(--accent); }
+  .listing .size, .listing .date { color: var(--text-secondary); font-size: 12px; }
+
+  /* File content */
+  .file-content { padding: 24px 40px; flex: 1; }
+  .file-content .filename {
+    font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* Markdown rendering */
+  .markdown-body {
+    max-width: 720px; line-height: 1.75; font-size: 16px;
+    font-family: var(--font-prose);
+  }
+  .markdown-body h1 {
+    font-size: 28px; font-weight: 700; line-height: 1.3;
+    margin: 24px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-prose);
+  }
+  .markdown-body h2 {
+    font-size: 22px; font-weight: 700; line-height: 1.35;
+    margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-prose);
+  }
+  .markdown-body h3 { font-size: 18px; font-weight: 700; margin: 16px 0 8px; font-family: var(--font-prose); }
+  .markdown-body p { margin: 10px 0; }
+  .markdown-body ul, .markdown-body ol { margin: 10px 0; padding-left: 24px; }
+  .markdown-body li { margin: 4px 0; }
+  .markdown-body code {
+    background: var(--bg-surface); padding: 2px 6px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 0.85em;
+  }
+  .markdown-body pre {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 6px;
+    padding: 16px; overflow-x: auto; margin: 12px 0;
+  }
+  .markdown-body pre code {
+    background: none; padding: 0;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+  }
+  .markdown-body blockquote {
+    border-left: 3px solid var(--accent); padding-left: 16px;
+    color: var(--text-secondary); margin: 10px 0;
+    font-style: italic; font-size: 15px; line-height: 1.7;
+  }
+  .markdown-body table { border-collapse: collapse; margin: 12px 0; }
+  .markdown-body th, .markdown-body td {
+    border: 1px solid var(--border); padding: 8px 12px; text-align: left;
+  }
+  .markdown-body th { background: var(--bg-surface); }
+  .markdown-body strong { color: var(--text-primary); }
+  .markdown-body hr { border: none; border-top: 1px solid var(--border-subtle); margin: 20px 0; }
+  .markdown-body img { max-width: 100%; border-radius: 6px; }
+  .markdown-body a { color: var(--accent); }
+  .markdown-body a:hover { color: var(--accent-hover); }
+
+  /* Code file rendering */
+  .code-body pre {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 6px;
+    padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5;
+    font-family: var(--font-mono);
+  }
+
+  /* Edit mode */
+  .edit-bar {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+  }
+  .edit-bar button {
+    padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border);
+    font-size: 13px; cursor: pointer; font-family: var(--font-mono);
+    transition: background 150ms ease;
+  }
+  .btn-edit {
+    background: var(--accent); color: var(--bg-primary); border-color: var(--accent);
+  }
+  .btn-edit:hover { background: var(--accent-hover); }
+  .btn-save {
+    background: var(--accent); color: var(--bg-primary); border-color: var(--accent);
+  }
+  .btn-save:hover { background: var(--accent-hover); }
+  .btn-cancel {
+    background: var(--bg-surface); color: var(--text-primary);
+  }
+  .btn-cancel:hover { background: var(--bg-elevated); }
+  .edit-textarea {
+    width: 100%; min-height: 70vh; background: var(--bg-sidebar); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px; padding: 16px;
+    font-family: var(--font-mono); font-size: 14px;
+    line-height: 1.6; resize: vertical; tab-size: 2;
+  }
+  .edit-textarea:focus { outline: none; border-color: var(--accent); }
+  .save-status {
+    font-size: 13px; color: var(--status-green); display: none;
+  }
+
+  /* Scheduled tasks */
+  .tasks-page { padding: 24px 32px; }
+  .tasks-page h1 { font-size: 1.5em; margin-bottom: 4px; font-family: var(--font-prose); }
+  .tasks-page .subtitle { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }
+  .task-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .task-card {
+    background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px;
+    padding: 24px; cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: border-color 150ms ease;
+  }
+  .task-card:hover { border-left-color: var(--accent); }
+  .task-card.status-running { border-left-color: var(--accent); }
+  .task-card.status-loaded { border-left-color: var(--status-green); }
+  .task-card .task-name {
+    font-size: 14px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;
+  }
+  .task-card .task-desc {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    font-family: var(--font-prose);
+  }
+  .task-card .task-schedule {
+    display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 12px;
+    font-weight: 500;
+  }
+  .task-schedule.running { background: rgba(212, 165, 116, 0.15); color: var(--accent); }
+  .task-schedule.scheduled { background: rgba(134, 239, 172, 0.1); color: var(--status-green); }
+  .task-card .task-meta {
+    display: flex; align-items: center; justify-content: space-between; margin-top: 10px;
+  }
+  .task-card .task-last-run { font-size: 11px; color: var(--text-tertiary); }
+  .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
+  }
+  .status-dot.green { background: var(--status-green); }
+  .status-dot.amber { background: var(--accent); animation: pulse 3s ease-in-out infinite; }
+  .status-dot.gray { background: var(--text-tertiary); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Hamburger menu button (hidden on desktop) */
+  .hamburger {
+    display: none; position: fixed; top: 10px; left: 10px; z-index: 1000;
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-primary); font-size: 22px; width: 40px; height: 40px;
+    cursor: pointer; align-items: center; justify-content: center; line-height: 1;
+  }
+  .sidebar-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 998;
+  }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    body { flex-direction: column; }
+    .hamburger { display: flex; }
+    .sidebar {
+      position: fixed; left: -240px; top: 0; bottom: 0; z-index: 999;
+      width: 220px; min-width: 220px; transition: left 0.25s ease;
+    }
+    .sidebar.open { left: 0; }
+    .sidebar-overlay.open { display: block; }
+    .main { width: 100%; }
+    .breadcrumb { padding: 12px 16px; padding-left: 56px; font-size: 12px; }
+    .listing { padding: 8px 12px; }
+    .listing td:nth-child(3) { display: none; }
+    .listing td { padding: 8px; font-size: 13px; }
+    .file-content { padding: 16px; }
+    .markdown-body { font-size: 15px; }
+    .markdown-body pre { padding: 10px; }
+    .markdown-body pre code { font-size: 12px; }
+    .code-body pre { font-size: 11px; padding: 10px; }
+    .tasks-page { padding: 16px; }
+    .tasks-page h1 { font-size: 1.3em; }
+    .task-grid { grid-template-columns: 1fr; gap: 12px; }
+    .task-detail { padding: 16px; }
+    .task-detail h1 { font-size: 1.2em; }
+    .detail-grid { grid-template-columns: 1fr; }
+    .log-box { font-size: 11px; padding: 10px; max-height: 300px; }
+    .edit-textarea { font-size: 12px; min-height: 50vh; }
+  }
+
+  /* Task detail page — redesigned agent view */
+  .task-detail { padding: 24px 32px; max-width: 960px; }
+  .task-detail-header { margin-bottom: 24px; }
+  .task-detail-header h1 {
+    font-size: 1.6em; margin-bottom: 6px; font-family: var(--font-prose);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .task-detail-header .task-desc {
+    color: var(--text-secondary); font-size: 14px; font-family: var(--font-prose);
+    line-height: 1.5; margin-bottom: 12px;
+  }
+  .task-detail-back {
+    color: var(--text-tertiary); font-size: 12px; margin-bottom: 16px; display: block;
+    transition: color 150ms ease;
+  }
+  .task-detail-back:hover { color: var(--text-secondary); }
+
+  /* Status bar — compact row of status + schedule + next run + reliability */
+  .task-status-bar {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    margin-bottom: 28px; padding: 14px 18px;
+    background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px;
+  }
+  .task-status-bar .status-chip {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500;
+  }
+  .task-status-bar .schedule-chip {
+    font-size: 12px; color: var(--text-secondary);
+    padding: 3px 10px; border-radius: 12px;
+    background: rgba(134, 239, 172, 0.08); border: 1px solid rgba(134, 239, 172, 0.15);
+  }
+  .task-status-bar .schedule-chip.always {
+    background: rgba(212, 165, 116, 0.1); border-color: rgba(212, 165, 116, 0.2);
+    color: var(--accent);
+  }
+  .task-status-bar .divider {
+    width: 1px; height: 20px; background: var(--border-subtle);
+  }
+  .task-status-bar .next-run {
+    font-size: 12px; color: var(--text-tertiary);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .task-status-bar .next-run .countdown {
+    color: var(--accent); font-weight: 500; font-family: var(--font-mono);
+  }
+
+  /* Reliability strip */
+  .reliability-strip {
+    display: flex; align-items: center; gap: 3px; margin-left: auto;
+  }
+  .reliability-strip .strip-dot {
+    width: 8px; height: 8px; border-radius: 2px; transition: transform 150ms ease;
+  }
+  .reliability-strip .strip-dot:hover { transform: scale(1.5); }
+  .reliability-strip .strip-dot.ran { background: var(--status-green); opacity: 0.8; }
+  .reliability-strip .strip-dot.missed { background: var(--bg-elevated); border: 1px solid var(--border-subtle); }
+  .reliability-strip .strip-dot.today { box-shadow: 0 0 0 1.5px var(--accent); }
+  .reliability-strip .strip-label {
+    font-size: 10px; color: var(--text-tertiary); margin-right: 6px; white-space: nowrap;
+  }
+
+  /* Latest output hero */
+  .latest-output {
+    margin-bottom: 28px;
+  }
+  .latest-output .section-label {
+    font-size: 11px; color: var(--text-tertiary); text-transform: uppercase;
+    letter-spacing: 0.8px; margin-bottom: 10px; font-weight: 500;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .latest-output .section-label .pulse-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--status-green);
+    animation: pulse 3s ease-in-out infinite;
+  }
+  .latest-output .output-card {
+    background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px;
+    padding: 24px; position: relative; overflow: hidden;
+  }
+  .latest-output .output-card::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(to bottom, var(--accent), var(--status-green));
+    border-radius: 3px 0 0 3px;
+  }
+  .latest-output .output-meta {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+    font-size: 12px; color: var(--text-tertiary);
+  }
+  .latest-output .output-meta .timestamp { font-family: var(--font-mono); }
+  .latest-output .output-text {
+    font-size: 14px; line-height: 1.75; color: var(--text-primary);
+    font-family: var(--font-prose);
+    max-height: 300px; overflow-y: auto;
+    mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+  }
+  .latest-output .output-text.expanded {
+    max-height: none;
+    mask-image: none; -webkit-mask-image: none;
+  }
+  .latest-output .expand-btn {
+    display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent);
+    cursor: pointer; background: none; border: none; font-family: var(--font-mono);
+    padding: 0;
+  }
+  .latest-output .expand-btn:hover { color: var(--accent-hover); }
+  .latest-output .no-output {
+    color: var(--text-tertiary); font-style: italic; font-size: 13px;
+    font-family: var(--font-prose);
+  }
+
+  /* Output feed — vertical timeline of past runs */
+  .output-feed { margin-bottom: 28px; }
+  .output-feed .section-label {
+    font-size: 11px; color: var(--text-tertiary); text-transform: uppercase;
+    letter-spacing: 0.8px; margin-bottom: 14px; font-weight: 500;
+  }
+  .feed-timeline { position: relative; padding-left: 24px; }
+  .feed-timeline::before {
+    content: ''; position: absolute; left: 7px; top: 8px; bottom: 8px;
+    width: 1px; background: var(--border-subtle);
+  }
+  .feed-item {
+    position: relative; margin-bottom: 16px; cursor: pointer;
+  }
+  .feed-item::before {
+    content: ''; position: absolute; left: -20px; top: 8px;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--bg-surface); border: 2px solid var(--accent);
+    transition: background 150ms ease;
+  }
+  .feed-item:first-child::before { background: var(--accent); }
+  .feed-item .feed-meta {
+    font-size: 11px; color: var(--text-tertiary); margin-bottom: 4px;
+    font-family: var(--font-mono);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .feed-item .feed-meta .feed-ago { color: var(--text-tertiary); opacity: 0.7; }
+  .feed-item .feed-summary {
+    font-size: 13px; line-height: 1.6; color: var(--text-secondary);
+    font-family: var(--font-prose);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    transition: color 150ms ease;
+  }
+  .feed-item:hover .feed-summary { color: var(--text-primary); }
+  .feed-item .feed-full {
+    display: none; font-size: 13px; line-height: 1.7; color: var(--text-primary);
+    font-family: var(--font-prose); margin-top: 8px;
+    background: var(--bg-surface); border: 1px solid var(--border-subtle);
+    border-radius: 8px; padding: 16px; max-height: 400px; overflow-y: auto;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .feed-item.expanded .feed-summary { display: none; }
+  .feed-item.expanded .feed-full { display: block; }
+
+  /* Collapsible config section */
+  .config-section { margin-top: 8px; }
+  .config-toggle {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 12px; color: var(--text-tertiary); text-transform: uppercase;
+    letter-spacing: 0.8px; font-weight: 500; margin-bottom: 14px;
+    background: none; border: none; font-family: var(--font-mono); padding: 0;
+    transition: color 150ms ease;
+  }
+  .config-toggle:hover { color: var(--text-secondary); }
+  .config-toggle .chevron {
+    transition: transform 200ms ease; display: inline-block; font-size: 10px;
+  }
+  .config-toggle.open .chevron { transform: rotate(90deg); }
+  .config-body { display: none; }
+  .config-body.open { display: block; }
+
+  .detail-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px;
+  }
+  .detail-item {
+    background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 12px;
+  }
+  .detail-item .label { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+  .detail-item .value { font-size: 12px; color: var(--text-primary); }
+  .detail-item .value a { color: var(--accent); }
+
+  /* Prompt section */
+  .prompt-section { margin-bottom: 20px; }
+  .prompt-section h3 { font-size: 12px; margin-bottom: 10px; color: var(--text-secondary); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.5px; }
+  .prompt-box {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 8px;
+    padding: 18px; font-size: 13px; line-height: 1.75; color: var(--text-secondary);
+    white-space: pre-wrap; word-wrap: break-word;
+    font-family: var(--font-prose); max-height: 300px; overflow-y: auto;
+  }
+  .prompt-box .bash-var { color: var(--accent); font-weight: 500; font-family: var(--font-mono); }
+
+  /* Log sections */
+  .log-section { margin-top: 16px; }
+  .log-section h3 { font-size: 12px; margin-bottom: 8px; color: var(--text-secondary); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.5px; }
+  .log-box {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 6px;
+    padding: 14px; font-family: var(--font-mono);
+    font-size: 11px; line-height: 1.6; max-height: 400px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all; color: var(--text-tertiary);
+  }
+  .log-box .log-empty { color: var(--text-tertiary); font-style: italic; }
+
+  /* Run history (fallback for tasks without session matching) */
+  .run-history-section { margin-bottom: 24px; }
+  .run-history-section h2 { font-size: 1.1em; margin-bottom: 12px; color: var(--text-primary); font-family: var(--font-prose); }
+  .run-list {
+    list-style: none; background: var(--bg-surface); border: 1px solid var(--border-subtle);
+    border-radius: 6px; overflow: hidden;
+    position: relative;
+  }
+  .run-list::before {
+    content: ''; position: absolute; left: 24px; top: 0; bottom: 0;
+    width: 1px; background: var(--border-subtle);
+  }
+  .run-list li {
+    padding: 10px 16px 10px 40px; border-bottom: 1px solid var(--border-subtle);
+    font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 10px;
+    position: relative;
+  }
+  .run-list li::before {
+    content: ''; position: absolute; left: 21px; top: 50%;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); transform: translateY(-50%);
+  }
+  .run-list li:last-child { border-bottom: none; }
+  .run-list .run-time { font-family: var(--font-mono); color: var(--text-secondary); font-size: 12px; }
+  .run-list .run-ago { color: var(--text-tertiary); font-size: 11px; }
+
+  /* Diary entry listing — special date formatting */
+  .diary-date { font-family: var(--font-prose); font-style: italic; }
+
+  /* Hero section for home page */
+  .hero-section {
+    padding: 32px 32px 0;
+    text-align: center;
+  }
+  .hero-section img {
+    max-width: 100%; height: auto; max-height: 260px;
+    border-radius: 8px; opacity: 0.9;
+  }
+
+  /* highlight.js warm overrides */
+  .hljs { background: var(--bg-sidebar) !important; }
+  .hljs-keyword, .hljs-selector-tag { color: var(--accent) !important; }
+  .hljs-string, .hljs-addition { color: #A3BE8C !important; }
+  .hljs-comment, .hljs-quote { color: var(--text-tertiary) !important; }
+  .hljs-number, .hljs-literal { color: #D08770 !important; }
+  .hljs-title, .hljs-section { color: var(--accent-hover) !important; }
+  .hljs-attr, .hljs-attribute { color: #EBCB8B !important; }
+</style>
+</head>
+<body>
+<button class="hamburger" id="hamburger-btn">&#9776;</button>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="sidebar" id="sidebar">
+  <hr class="sidebar-rule">
+  SIDEBAR_LINKS
+</div>
+<div class="main">
+  <div class="breadcrumb">BREADCRUMB</div>
+  CONTENT
+</div>
+<script>
+// Sidebar toggle for mobile
+const hamburger = document.getElementById('hamburger-btn');
+const sidebar = document.getElementById('sidebar');
+const overlay = document.getElementById('sidebar-overlay');
+function toggleSidebar() {
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('open');
+}
+hamburger.addEventListener('click', toggleSidebar);
+overlay.addEventListener('click', toggleSidebar);
+// Close sidebar when clicking a link (mobile)
+sidebar.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+  sidebar.classList.remove('open');
+  overlay.classList.remove('open');
+}));
+
+// Render markdown content if present
+const mdEl = document.getElementById('markdown-raw');
+if (mdEl) {
+  const raw = mdEl.textContent;
+  const rendered = marked.parse(raw);
+  document.getElementById('markdown-rendered').innerHTML = rendered;
+  // Apply syntax highlighting to code blocks
+  document.querySelectorAll('#markdown-rendered pre code').forEach(el => hljs.highlightElement(el));
+}
+// Apply syntax highlighting to code files
+document.querySelectorAll('.code-body pre code').forEach(el => hljs.highlightElement(el));
+
+// Edit functionality for CLAUDE.md
+const editBtn = document.getElementById('btn-edit');
+if (editBtn) {
+  const filePath = editBtn.dataset.path;
+  const rendered = document.getElementById('markdown-rendered');
+  const rawEl = document.getElementById('markdown-raw');
+  const editArea = document.getElementById('edit-area');
+  const textarea = document.getElementById('edit-textarea');
+  const saveBtn = document.getElementById('btn-save');
+  const cancelBtn = document.getElementById('btn-cancel');
+  const status = document.getElementById('save-status');
+
+  editBtn.addEventListener('click', () => {
+    textarea.value = rawEl.textContent;
+    rendered.style.display = 'none';
+    editArea.style.display = 'block';
+    editBtn.style.display = 'none';
+    textarea.focus();
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    editArea.style.display = 'none';
+    rendered.style.display = 'block';
+    editBtn.style.display = 'inline-block';
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    try {
+      const resp = await fetch('/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: filePath, content: textarea.value})
+      });
+      const result = await resp.json();
+      if (result.ok) {
+        status.textContent = 'Saved!';
+        status.style.display = 'inline';
+        // Re-render the markdown
+        rendered.innerHTML = marked.parse(textarea.value);
+        rendered.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+        rawEl.textContent = textarea.value;
+        setTimeout(() => {
+          editArea.style.display = 'none';
+          rendered.style.display = 'block';
+          editBtn.style.display = 'inline-block';
+          status.style.display = 'none';
+        }, 800);
+      } else {
+        status.textContent = 'Error: ' + result.error;
+        status.style.color = '#f85149';
+        status.style.display = 'inline';
+      }
+    } catch(e) {
+      status.textContent = 'Error: ' + e.message;
+      status.style.color = '#f85149';
+      status.style.display = 'inline';
+    }
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+  });
+
+  // Tab key inserts spaces instead of changing focus
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
+      textarea.selectionStart = textarea.selectionEnd = start + 2;
+    }
+    // Cmd+S / Ctrl+S to save
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveBtn.click();
+    }
+  });
+}
+</script>
+</body>
+</html>"""
+
+
+def human_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024:
+            return f"{size:.0f} {unit}" if unit == 'B' else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def human_date(ts):
+    dt = datetime.fromtimestamp(ts)
+    return dt.strftime("%b %d, %Y %H:%M")
+
+
+def make_sidebar(current_path=''):
+    links = []
+    for name, path in BOOKMARKS:
+        icon_svg = SIDEBAR_ICONS.get(name, SIDEBAR_ICONS['Home'])
+        # Determine if this sidebar item is active
+        active = ''
+        if current_path and current_path.startswith(path):
+            active = ' active'
+        links.append(f'<a href="/browse{path}" class="{active}"><span class="icon">{icon_svg}</span>{name}</a>')
+
+    # Scheduled Tasks link (only show if task prefixes are configured)
+    if TASK_PREFIXES:
+        tasks_active = ' active' if current_path == 'Scheduled Tasks' or current_path.startswith('Task:') else ''
+        tasks_icon = SIDEBAR_ICONS['Scheduled Tasks']
+        links.append(f'<a href="/tasks" class="{tasks_active}"><span class="icon">{tasks_icon}</span>Scheduled Tasks</a>')
+    return "\n".join(links)
+
+
+def make_breadcrumb(path):
+    parts = Path(path).parts
+    crumbs = []
+    for i, part in enumerate(parts):
+        full = "/".join(parts[:i+1])
+        if not full.startswith("/"):
+            full = "/" + full
+        crumbs.append(f'<a href="/browse{full}">{part}</a>')
+    return ' <span class="sep">/</span> '.join(crumbs)
+
+
+def lang_for_ext(ext):
+    mapping = {
+        '.py': 'python', '.rb': 'ruby', '.js': 'javascript', '.ts': 'typescript',
+        '.jsx': 'javascript', '.tsx': 'typescript', '.json': 'json', '.yml': 'yaml',
+        '.yaml': 'yaml', '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash',
+        '.css': 'css', '.html': 'html', '.sql': 'sql', '.rs': 'rust',
+        '.go': 'go', '.java': 'java', '.c': 'c', '.cpp': 'cpp', '.swift': 'swift',
+        '.toml': 'toml', '.xml': 'xml', '.erb': 'erb',
+    }
+    return mapping.get(ext, '')
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # Suppress access logs
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = urllib.parse.unquote(parsed.path)
+
+        if path == '/save':
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            try:
+                data = json.loads(body)
+                file_path = Path(data['path']).resolve()
+
+                # Only allow editing whitelisted files
+                if file_path not in EDITABLE_FILES:
+                    self._send_json(403, {'ok': False, 'error': 'This file is not editable'})
+                    return
+
+                file_path.write_text(data['content'])
+                self._send_json(200, {'ok': True})
+            except Exception as e:
+                self._send_json(500, {'ok': False, 'error': str(e)})
+            return
+
+        self.send_error(404)
+
+    def _send_json(self, code, obj):
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(obj).encode())
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = urllib.parse.unquote(parsed.path)
+
+        if path == '/' or path == '':
+            self.send_response(302)
+            self.send_header('Location', f'/browse{BASE_DIR}')
+            self.end_headers()
+            return
+
+        if path == '/tasks':
+            self.serve_tasks()
+            return
+
+        if path.startswith('/tasks/'):
+            label = path[7:]
+            self.serve_task_detail(label)
+            return
+
+        if path.startswith('/raw/'):
+            file_path = '/' + path[5:]
+            self.serve_raw_file(file_path)
+            return
+
+        if path.startswith('/browse'):
+            file_path = path[7:]  # Remove /browse prefix
+            if not file_path:
+                file_path = str(BASE_DIR)
+            self.serve_path(file_path)
+            return
+
+        self.send_response(404)
+        self.send_header('Content-Type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Not found')
+
+    def serve_path(self, file_path):
+        p = Path(file_path)
+
+        if not p.exists():
+            self.send_error(404, f"Not found: {file_path}")
+            return
+
+        # Security: must be under BASE_DIR
+        try:
+            p.resolve().relative_to(BASE_DIR.resolve())
+        except ValueError:
+            self.send_error(403, "Access denied")
+            return
+
+        if p.is_dir():
+            self.serve_directory(p)
+        else:
+            self.serve_file(p)
+
+    def serve_directory(self, p):
+        entries = []
+        try:
+            for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                if item.name in SKIP_DIRS:
+                    continue
+                if item.name.startswith('.') and item.name not in ('.claude',):
+                    continue
+                try:
+                    stat = item.stat()
+                    entries.append({
+                        'name': item.name,
+                        'is_dir': item.is_dir(),
+                        'size': stat.st_size if not item.is_dir() else 0,
+                        'mtime': stat.st_mtime,
+                        'path': str(item),
+                    })
+                except (PermissionError, OSError):
+                    continue
+        except PermissionError:
+            self.send_error(403, "Permission denied")
+            return
+
+        # Check if this is the diary folder
+        is_diary = str(p).rstrip('/').endswith('/diary')
+
+        rows = []
+        for e in entries:
+            icon = FILE_TYPE_SVGS.get('_folder', '') if e['is_dir'] else self._file_icon_svg(e['name'])
+            size = "" if e['is_dir'] else human_size(e['size'])
+            date = smart_date(e['mtime'])
+
+            # Diary special treatment: show human-readable dates
+            display_name = e['name']
+            extra_class = ''
+            if is_diary and re.match(r'^\d{4}-\d{2}-\d{2}\.md$', e['name']):
+                try:
+                    dt = datetime.strptime(e['name'][:10], '%Y-%m-%d')
+                    display_name = dt.strftime('%A, %B %-d, %Y')
+                    extra_class = ' diary-date'
+                except ValueError:
+                    pass
+
+            name_html = f'<a href="/browse{e["path"]}" class="{extra_class}">{display_name}</a>'
+            rows.append(f'''<tr>
+                <td><div class="name"><span class="icon">{icon}</span>{name_html}</div></td>
+                <td class="size">{size}</td>
+                <td class="date">{date}</td>
+            </tr>''')
+
+        # Hero section for home page
+        hero_html = ''
+        if str(p) == str(BASE_DIR):
+            hero_html = self._home_hero()
+
+        content = f'''{hero_html}<div class="listing"><table>
+            <tbody>{"".join(rows)}</tbody>
+        </table></div>'''
+
+        self._send_html(str(p), content)
+
+    def _home_hero(self):
+        """Return hero HTML for the home page. Uses hero image if available, otherwise a text greeting."""
+        # Look for a hero image in the same directory as this script
+        script_dir = Path(__file__).parent
+        hero_img = script_dir / 'hero.png'
+        if not hero_img.exists():
+            hero_img = script_dir / 'hero.jpg'
+        if hero_img.exists():
+            return f'''<div class="hero-section">
+                <img src="/raw{hero_img}" alt="{DISPLAY_NAME}">
+            </div>'''
+        # Fallback: a warm text-based header
+        now = datetime.now()
+        hour = now.hour
+        if hour < 12:
+            greeting = 'Good morning'
+        elif hour < 17:
+            greeting = 'Good afternoon'
+        else:
+            greeting = 'Good evening'
+        return f'''<div class="hero-section" style="text-align:left; padding-bottom:16px; border-bottom:1px solid var(--border-subtle); margin-bottom:8px;">
+            <div style="font-family:var(--font-prose); font-size:20px; color:var(--accent); margin-bottom:4px;">{greeting}.</div>
+            <div style="font-family:var(--font-prose); font-size:14px; color:var(--text-secondary);">Welcome to {DISPLAY_NAME}\'s workspace.</div>
+        </div>'''
+
+    def serve_raw_file(self, file_path):
+        """Serve a file with its native MIME type (used for iframe rendering)."""
+        p = Path(file_path)
+        if not p.exists():
+            self.send_error(404, f"Not found: {file_path}")
+            return
+        try:
+            p.resolve().relative_to(BASE_DIR.resolve())
+        except ValueError:
+            self.send_error(403, "Access denied")
+            return
+        mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.end_headers()
+        self.wfile.write(p.read_bytes())
+
+    def serve_file(self, p):
+        ext = p.suffix.lower()
+
+        # For images, serve raw
+        if ext in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'):
+            mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+            self.send_response(200)
+            self.send_header('Content-Type', mime)
+            self.end_headers()
+            self.wfile.write(p.read_bytes())
+            return
+
+        # For text files, render in the explorer
+        if ext in TEXT_EXTENSIONS or ext == '':
+            try:
+                text = p.read_text(errors='replace')
+            except Exception as e:
+                self.send_error(500, str(e))
+                return
+
+            if ext == '.md':
+                # Markdown: render with marked.js
+                import html
+                escaped = html.escape(text)
+                is_editable = p.resolve() in EDITABLE_FILES
+                edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html.escape(str(p))}">Edit</button>' if is_editable else ''
+                edit_area = '''<div id="edit-area" style="display:none;">
+                    <textarea id="edit-textarea" class="edit-textarea"></textarea>
+                    <div class="edit-bar" style="margin-top:12px;">
+                        <button id="btn-save" class="btn-save">Save</button>
+                        <button id="btn-cancel" class="btn-cancel">Cancel</button>
+                        <span id="save-status" class="save-status"></span>
+                    </div>
+                </div>''' if is_editable else ''
+                content = f'''<div class="file-content">
+                    <div class="edit-bar">
+                        <span class="filename" style="margin-bottom:0; padding-bottom:0; border-bottom:none;">{p.name} &middot; {human_size(p.stat().st_size)}</span>
+                        {edit_button}
+                    </div>
+                    <script id="markdown-raw" type="text/plain">{escaped}</script>
+                    <div id="markdown-rendered" class="markdown-body"></div>
+                    {edit_area}
+                </div>'''
+            elif ext == '.html':
+                # HTML: render in iframe with toggle to view source
+                import html as html_mod
+                lang = lang_for_ext(ext)
+                escaped = html_mod.escape(text)
+                raw_url = f'/raw{p}'
+                content = f'''<div class="file-content">
+                    <div class="filename" style="display:flex; align-items:center; gap:12px;">
+                        {p.name} &middot; {human_size(p.stat().st_size)}
+                        <div style="display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; font-size:12px; margin-left:auto;">
+                            <button id="btn-render" onclick="toggleHtmlView('render')" style="padding:4px 12px; background:var(--accent); color:var(--bg-primary); border:none; cursor:pointer; font-family:var(--font-mono); font-size:12px;">Render</button>
+                            <button id="btn-code" onclick="toggleHtmlView('code')" style="padding:4px 12px; background:transparent; color:var(--text-secondary); border:none; cursor:pointer; font-family:var(--font-mono); font-size:12px;">Code</button>
+                        </div>
+                    </div>
+                    <div id="html-render-view">
+                        <iframe src="{raw_url}" style="width:100%; height:80vh; border:1px solid var(--border-subtle); border-radius:6px; background:#fff;"></iframe>
+                    </div>
+                    <div id="html-code-view" style="display:none;">
+                        <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
+                    </div>
+                </div>
+                <script>
+                function toggleHtmlView(mode) {{
+                    var renderView = document.getElementById('html-render-view');
+                    var codeView = document.getElementById('html-code-view');
+                    var btnRender = document.getElementById('btn-render');
+                    var btnCode = document.getElementById('btn-code');
+                    if (mode === 'render') {{
+                        renderView.style.display = '';
+                        codeView.style.display = 'none';
+                        btnRender.style.background = 'var(--accent)';
+                        btnRender.style.color = 'var(--bg-primary)';
+                        btnCode.style.background = 'transparent';
+                        btnCode.style.color = 'var(--text-secondary)';
+                    }} else {{
+                        renderView.style.display = 'none';
+                        codeView.style.display = '';
+                        btnCode.style.background = 'var(--accent)';
+                        btnCode.style.color = 'var(--bg-primary)';
+                        btnRender.style.background = 'transparent';
+                        btnRender.style.color = 'var(--text-secondary)';
+                        if (typeof hljs !== 'undefined') hljs.highlightAll();
+                    }}
+                }}
+                </script>'''
+            else:
+                # Code: render with highlight.js
+                import html
+                lang = lang_for_ext(ext)
+                escaped = html.escape(text)
+                content = f'''<div class="file-content">
+                    <div class="filename">{p.name} &middot; {human_size(p.stat().st_size)}</div>
+                    <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
+                </div>'''
+
+            self._send_html(str(p), content)
+            return
+
+        # Binary files: download
+        mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.send_header('Content-Disposition', f'attachment; filename="{p.name}"')
+        self.end_headers()
+        self.wfile.write(p.read_bytes())
+
+    def serve_tasks(self):
+        jobs = get_launchd_jobs()
+
+        # Generate timeline SVG
+        timeline_html = generate_timeline_svg(jobs)
+
+        cards = []
+        for job in jobs:
+            # Friendly name from label
+            name = _strip_label_prefixes(job['label']).replace('-', ' ').title()
+
+            if job['keep_alive'] or job['is_running']:
+                dot_class = 'amber'
+                sched_class = 'running'
+                sched_label = 'Always running'
+                card_status = 'status-running'
+            elif job['is_loaded']:
+                dot_class = 'green'
+                sched_class = 'scheduled'
+                sched_label = job['schedule']
+                card_status = 'status-loaded'
+            else:
+                dot_class = 'gray'
+                sched_class = 'scheduled'
+                sched_label = job['schedule']
+                card_status = ''
+
+            last_run_str = ''
+            if job['last_run']:
+                last_run_str = f'{_time_ago(job["last_run"])}'
+
+            cards.append(f'''<a href="/tasks/{job['label']}" style="text-decoration:none; color:inherit;">
+                <div class="task-card {card_status}">
+                    <div class="task-name"><span class="status-dot {dot_class}"></span>{name}</div>
+                    <div class="task-desc">{job['description']}</div>
+                    <div class="task-meta">
+                        <span class="task-schedule {sched_class}">{sched_label}</span>
+                        <span class="task-last-run">{last_run_str}</span>
+                    </div>
+                </div>
+            </a>''')
+
+        content = f'''<div class="tasks-page">
+            <h1>Scheduled Tasks</h1>
+            <div class="subtitle">{DISPLAY_NAME}'s daily rhythm</div>
+            {timeline_html}
+            <div class="task-grid">{"".join(cards)}</div>
+        </div>'''
+
+        self._send_html('Scheduled Tasks', content)
+
+    def serve_task_detail(self, label):
+        jobs = get_launchd_jobs()
+        job = None
+        for j in jobs:
+            if j['label'] == label:
+                job = j
+                break
+
+        if not job:
+            self.send_error(404, f"Task not found: {label}")
+            return
+
+        import html as html_mod
+        name = _strip_label_prefixes(label).replace('-', ' ').title()
+
+        # Extract claude -p prompt if this is a claude task
+        prompt = extract_claude_prompt(job['script']) if job['script'] else None
+
+        # Get run history WITH output extraction
+        runs = get_run_history(prompt, with_output=True)
+
+        # --- Status bar components ---
+        is_running = job['is_running'] or job['keep_alive']
+        if is_running:
+            status_chip = '<span class="status-chip"><span class="status-dot amber"></span>Running</span>'
+        elif job['is_loaded']:
+            status_chip = '<span class="status-chip"><span class="status-dot green"></span>Loaded</span>'
+        else:
+            status_chip = '<span class="status-chip"><span class="status-dot gray"></span>Not loaded</span>'
+
+        sched_class = 'always' if ('Always' in job['schedule'] or is_running) else ''
+        schedule_chip = f'<span class="schedule-chip {sched_class}">{job["schedule"]}</span>'
+
+        # Next run countdown
+        next_run_html = ''
+        next_info = get_next_run_time(job['schedule'])
+        if next_info:
+            _, human = next_info
+            next_run_html = f'''<span class="divider"></span>
+                <span class="next-run">Next in <span class="countdown">{human}</span></span>'''
+
+        # Reliability strip
+        strip_html = ''
+        if prompt:
+            strip = get_reliability_strip(prompt)
+            today = datetime.now().date()
+            dots = []
+            for d, ran in strip:
+                classes = 'strip-dot'
+                classes += ' ran' if ran else ' missed'
+                if d == today:
+                    classes += ' today'
+                day_label = d.strftime('%b %-d')
+                dots.append(f'<span class="{classes}" title="{day_label}"></span>')
+            strip_html = f'''<span class="divider"></span>
+                <span class="reliability-strip">
+                    <span class="strip-label">14d</span>
+                    {"".join(dots)}
+                </span>'''
+
+        status_bar = f'''<div class="task-status-bar">
+            {status_chip}
+            {schedule_chip}
+            {next_run_html}
+            {strip_html}
+        </div>'''
+
+        # --- Latest output hero ---
+        latest_html = ''
+        if runs and runs[0].get('output'):
+            latest = runs[0]
+            ago = _time_ago(latest['time'])
+            time_str = latest['time'].strftime('%b %d at %H:%M')
+            # Convert markdown-like output to safe HTML
+            output_escaped = html_mod.escape(latest['output'])
+            # Preserve paragraph breaks
+            output_formatted = output_escaped.replace('\n\n', '</p><p>').replace('\n', '<br>')
+            output_formatted = f'<p>{output_formatted}</p>'
+            # Bold markdown **text**
+            output_formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', output_formatted)
+
+            latest_html = f'''<div class="latest-output">
+                <div class="section-label"><span class="pulse-dot"></span> Latest Output</div>
+                <div class="output-card">
+                    <div class="output-meta">
+                        <span class="timestamp">{time_str}</span>
+                        <span>{ago}</span>
+                    </div>
+                    <div class="output-text" id="latest-text">{output_formatted}</div>
+                    <button class="expand-btn" onclick="
+                        var el = document.getElementById('latest-text');
+                        el.classList.toggle('expanded');
+                        this.textContent = el.classList.contains('expanded') ? '↑ Collapse' : '↓ Show more';
+                    ">↓ Show more</button>
+                </div>
+            </div>'''
+        elif not runs:
+            latest_html = f'''<div class="latest-output">
+                <div class="section-label">Latest Output</div>
+                <div class="output-card">
+                    <div class="no-output">No recorded runs yet. This task hasn't been matched to any Claude Code sessions.</div>
+                </div>
+            </div>'''
+
+        # --- Output feed (past runs) ---
+        feed_html = ''
+        feed_runs = runs[1:7] if len(runs) > 1 else []  # skip latest (shown in hero), show next 6
+        if feed_runs:
+            items = []
+            for i, run in enumerate(feed_runs):
+                ago = _time_ago(run['time'])
+                time_str = run['time'].strftime('%b %d, %H:%M')
+                summary = ''
+                full_output = ''
+                if run.get('output'):
+                    # First 150 chars as summary
+                    raw = run['output']
+                    summary_text = raw[:200].replace('\n', ' ').strip()
+                    if len(raw) > 200:
+                        summary_text += '...'
+                    summary = html_mod.escape(summary_text)
+                    full_escaped = html_mod.escape(raw)
+                    full_formatted = full_escaped.replace('\n\n', '</p><p>').replace('\n', '<br>')
+                    full_formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', full_formatted)
+                    full_output = f'<div class="feed-full"><p>{full_formatted}</p></div>'
+                else:
+                    summary = '<em style="color:var(--text-tertiary)">Session found, output not extracted</em>'
+
+                items.append(f'''<div class="feed-item" onclick="this.classList.toggle('expanded')">
+                    <div class="feed-meta">
+                        <span>{time_str}</span>
+                        <span class="feed-ago">{ago}</span>
+                    </div>
+                    <div class="feed-summary">{summary}</div>
+                    {full_output}
+                </div>''')
+
+            feed_html = f'''<div class="output-feed">
+                <div class="section-label">Recent Runs <span style="font-weight:normal; opacity:0.6;">({len(runs)} in last 14 days)</span></div>
+                <div class="feed-timeline">{"".join(items)}</div>
+            </div>'''
+
+        # --- Collapsible config section ---
+        script_link = f'<a href="/browse{job["script"]}">{job["script"]}</a>' if job['script'] else '&mdash;'
+        plist_link = f'<a href="/browse{job["plist_path"]}">{Path(job["plist_path"]).name}</a>'
+        last_run_text = job['last_run'].strftime('%b %d, %Y at %H:%M') if job['last_run'] else 'Never'
+
+        # Prompt
+        prompt_html = ''
+        if prompt:
+            escaped_prompt = html_mod.escape(prompt)
+            highlighted_prompt = re.sub(
+                r'\$\{?\w+\}?',
+                lambda m: f'<span class="bash-var">{m.group()}</span>',
+                escaped_prompt
+            )
+            prompt_html = f'''<div class="prompt-section">
+                <h3>Prompt</h3>
+                <div class="prompt-box">{highlighted_prompt}</div>
+            </div>'''
+
+        # Logs
+        stdout_content = ''
+        stderr_content = ''
+        if job['stdout_log'] and Path(job['stdout_log']).exists():
+            try:
+                lines = Path(job['stdout_log']).read_text(errors='replace').strip().splitlines()
+                stdout_content = html_mod.escape('\n'.join(lines[-100:])) if lines else '<span class="log-empty">Empty</span>'
+            except Exception:
+                stdout_content = '<span class="log-empty">Could not read</span>'
+        else:
+            stdout_content = '<span class="log-empty">No log file</span>'
+
+        if job['stderr_log'] and Path(job['stderr_log']).exists():
+            try:
+                lines = Path(job['stderr_log']).read_text(errors='replace').strip().splitlines()
+                stderr_content = html_mod.escape('\n'.join(lines[-100:])) if lines else '<span class="log-empty">Empty</span>'
+            except Exception:
+                stderr_content = '<span class="log-empty">Could not read</span>'
+        else:
+            stderr_content = '<span class="log-empty">No log file</span>'
+
+        config_html = f'''<div class="config-section">
+            <button class="config-toggle" onclick="
+                this.classList.toggle('open');
+                this.nextElementSibling.classList.toggle('open');
+            "><span class="chevron">&#9654;</span> Configuration &amp; Logs</button>
+            <div class="config-body">
+                <div class="detail-grid">
+                    <div class="detail-item">
+                        <div class="label">Label</div>
+                        <div class="value">{label}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="label">Last Activity</div>
+                        <div class="value">{last_run_text}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="label">Script</div>
+                        <div class="value">{script_link}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="label">Plist</div>
+                        <div class="value">{plist_link}</div>
+                    </div>
+                </div>
+                {prompt_html}
+                <div class="log-section">
+                    <h3>stdout</h3>
+                    <div class="log-box">{stdout_content}</div>
+                </div>
+                <div class="log-section">
+                    <h3>stderr</h3>
+                    <div class="log-box">{stderr_content}</div>
+                </div>
+            </div>
+        </div>'''
+
+        content = f'''<div class="task-detail">
+            <a href="/tasks" class="task-detail-back">&larr; Back to all tasks</a>
+            <div class="task-detail-header">
+                <h1>{name}</h1>
+                <div class="task-desc">{job['description']}</div>
+            </div>
+            {status_bar}
+            {latest_html}
+            {feed_html}
+            {config_html}
+        </div>'''
+
+        self._send_html(f'Task: {name}', content)
+
+    def _file_icon_svg(self, name):
+        """Return an SVG icon for a file based on its extension."""
+        ext = Path(name).suffix.lower().lstrip('.')
+        return FILE_TYPE_SVGS.get(ext, FILE_TYPE_SVGS['_default'])
+
+    def _send_html(self, path, content):
+        html = HTML_TEMPLATE.replace('DISPLAY_NAME_PLACEHOLDER', DISPLAY_NAME)
+        html = html.replace('SIDEBAR_LINKS', make_sidebar(path))
+        html = html.replace('BREADCRUMB', make_breadcrumb(path))
+        html = html.replace('CONTENT', content)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(html.encode())
+
+
+if __name__ == '__main__':
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"File Explorer running on port {PORT}")
+    print(f"  Base directory: {BASE_DIR}")
+    if TASK_PREFIXES:
+        print(f"  Monitoring tasks: {', '.join(TASK_PREFIXES)}")
+    server.serve_forever()
