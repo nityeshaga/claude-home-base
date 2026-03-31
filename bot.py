@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Your Bot — AI cofounder for your project.
+Your AI Employee — Slack bot powered by Claude Code.
 
 HTTP Events API version (production-standard). Uses Flask + Cloudflare Tunnel
 instead of Socket Mode. Slack sends stateless HTTP POSTs to your public URL.
@@ -10,9 +10,9 @@ Claude Code calls take minutes, so we respond immediately and process in a
 background thread, posting the result when ready.
 
 Also supports proactive messaging via CLI:
-    python bot_bot.py --send USER_ID "message"
-    python bot_bot.py --channel "#general" "message"
-    echo '{"result":"..."}' | python bot_bot.py --send-result USER_ID
+    python bot.py --send USER_ID "message"
+    python bot.py --channel "#general" "message"
+    echo '{"result":"..."}' | python bot.py --send-result USER_ID
 """
 
 from __future__ import annotations
@@ -91,6 +91,15 @@ CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1800"))  # 30 min default
 MAX_SLACK_MSG_LEN = 3900
 PORT = int(os.environ.get("PORT", "3000"))
 
+# The Slack user ID of this bot — set via BOT_USER_ID env var.
+# Used to identify the bot's own messages in thread history and to prevent
+# duplicate handling of @mentions. Find it in your Slack app settings or
+# by calling auth.test.
+BOT_USER_ID = os.environ.get("BOT_USER_ID", "")
+
+# Display name for the bot (used in thread context formatting)
+BOT_DISPLAY_NAME = os.environ.get("BOT_DISPLAY_NAME", "Your AI Employee")
+
 # ---------------------------------------------------------------------------
 # Slack app (with signing secret for request verification)
 # ---------------------------------------------------------------------------
@@ -124,6 +133,50 @@ def _get_user_name(user_id: str) -> str:
         _user_name_cache[user_id] = name
     return name
 
+
+
+def _fetch_thread_context(channel: str, thread_ts: str, current_msg_ts: str) -> str | None:
+    """Fetch all prior messages in a thread and format them as context for Claude.
+
+    Returns a formatted string of the conversation history, or None if there's
+    nothing useful (e.g., the thread has only the current message).
+    Excludes the current message (it's already in the prompt) and bot messages
+    that are Claude's own responses (to avoid echoing back our own output).
+    """
+    try:
+        result = slack_client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=50,
+        )
+        messages = result.get("messages", [])
+    except Exception as e:
+        logger.warning(f"Failed to fetch thread history: {e}")
+        return None
+
+    if len(messages) <= 1:
+        return None
+
+    lines = []
+    for msg in messages:
+        msg_ts = msg.get("ts", "")
+        # Skip the current inbound message — it's already the prompt
+        if msg_ts == current_msg_ts:
+            continue
+
+        msg_user = msg.get("user", "")
+        msg_text = msg.get("text", "").strip()
+        if not msg_text:
+            continue
+
+        if msg_user == BOT_USER_ID:
+            lines.append(f"[You ({BOT_DISPLAY_NAME})] said:\n{msg_text}")
+        else:
+            name = _get_user_name(msg_user)
+            lines.append(f"[{name}] said:\n{msg_text}")
+
+    if not lines:
+        return None
+
+    return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +412,22 @@ def download_slack_files(event: dict) -> list[Path]:
     return downloaded
 
 
+# Regex for detecting file paths in messages (shared across interactive & proactive)
+FILE_PATH_PATTERN = re.compile(
+    r'(?:^|\s)(/(?:Users|tmp|var)[^\s\'"<>|*?]+\.(?:png|jpg|jpeg|gif|svg|webp|pdf|csv|xlsx|json|txt|html|zip|tar|gz|mp3|mp4|mov))',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _auto_upload_files(text: str, channel: str, thread_ts: str | None = None) -> None:
+    """Scan text for file paths and upload any that exist to Slack."""
+    for fp_match in FILE_PATH_PATTERN.findall(text):
+        fp = Path(fp_match.strip())
+        if fp.exists() and fp.is_file():
+            upload_file_to_slack(str(fp), channel, thread_ts=thread_ts)
+            logger.info(f"Auto-uploaded file from response: {fp}")
+
+
 def upload_file_to_slack(
     file_path: str,
     channel: str,
@@ -451,6 +520,9 @@ def send_dm(
 
     effective_thread_ts = thread_ts or parent_ts
 
+    # Auto-upload any file paths mentioned in the message
+    _auto_upload_files(message, channel_id, thread_ts=effective_thread_ts)
+
     if session_id and effective_thread_ts:
         _save_session(effective_thread_ts, session_id)
 
@@ -481,6 +553,9 @@ def send_to_channel(
             parent_ts = result["ts"]
 
     effective_thread_ts = thread_ts or parent_ts
+
+    # Auto-upload any file paths mentioned in the message
+    _auto_upload_files(message, channel, thread_ts=effective_thread_ts)
 
     if session_id and effective_thread_ts:
         _save_session(effective_thread_ts, session_id)
@@ -523,22 +598,36 @@ def process_message_async(event: dict) -> None:
 
     # Prepend sender attribution so Claude knows who sent this message
     sender_name = _get_user_name(user_id)
+    msg_ts = event.get("ts")
 
     # For channel messages (not DMs), let Claude decide if it should respond
     is_channel = event.get("channel_type") not in ("im", "mpim")
     has_existing_session = _get_session(thread_ts) is not None
+
+    # If this is a thread reply and we have no saved session, fetch the full
+    # thread history so Claude has context on what was said before.
+    is_thread_reply = thread_ts != msg_ts
+    thread_context = None
+    if not has_existing_session and is_thread_reply:
+        thread_context = _fetch_thread_context(channel, thread_ts, msg_ts)
+
     if is_channel and not has_existing_session:
-        text = (
+        prefix = (
             f"You received this message in a public channel from {sender_name} (<@{user_id}>). "
             "Only respond if it's relevant to you or your work. "
             "If it's not relevant, respond with exactly: SKIP\n\n"
-            + text
         )
+        if thread_context:
+            text = prefix + f"Here is the conversation so far in this thread:\n\n{thread_context}\n\n[{sender_name}] now says:\n{text}"
+        else:
+            text = prefix + text
     else:
-        text = f"[{sender_name}] says:\n{text}"
+        if thread_context:
+            text = f"Here is the conversation so far in this thread:\n\n{thread_context}\n\n[{sender_name}] now says:\n{text}"
+        else:
+            text = f"[{sender_name}] says:\n{text}"
 
     # Add eyes reaction as thinking indicator
-    msg_ts = event.get("ts")
     try:
         slack_client.reactions_add(channel=channel, name="eyes", timestamp=msg_ts)
     except Exception:
@@ -549,11 +638,6 @@ def process_message_async(event: dict) -> None:
     all_texts = []  # collect all text blocks for audit/SKIP check
     first_text_sent = False
     skip_detected = False
-
-    file_pattern = re.compile(
-        r'(?:^|\s)(/(?:Users|tmp|var)[^\s\'"<>|*?]+\.(?:png|jpg|jpeg|gif|svg|webp|pdf|csv|xlsx|json|txt|html|zip|tar|gz|mp3|mp4|mov))',
-        re.IGNORECASE | re.MULTILINE,
-    )
 
     def on_text(text_block: str):
         """Called for each text block Claude produces — post it to Slack immediately."""
@@ -567,11 +651,7 @@ def process_message_async(event: dict) -> None:
         all_texts.append(text_block)
 
         # Auto-upload any file paths mentioned
-        for fp_match in file_pattern.findall(text_block):
-            fp = Path(fp_match.strip())
-            if fp.exists() and fp.is_file():
-                upload_file_to_slack(str(fp), channel, thread_ts=thread_ts)
-                logger.info(f"Auto-uploaded file from response: {fp}")
+        _auto_upload_files(text_block, channel, thread_ts=thread_ts)
 
         # Post to Slack
         slack_text = md_to_slack(text_block)
@@ -630,7 +710,7 @@ def process_message_async(event: dict) -> None:
 
     full_response = "\n\n".join(all_texts)
     audit_interaction(event, full_response, duration, new_session_id)
-    logger.info(f"Responded to {user_id} in {duration:.1f}s ({len(response_text)} chars)")
+    logger.info(f"Responded to {user_id} in {duration:.1f}s ({len(full_response)} chars)")
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +725,15 @@ def handle_message(event, say):
     if subtype and subtype != "file_share":
         return
 
+    # Skip @mentions in channels — those are handled by handle_mention() via
+    # the app_mention event.  Without this guard, Slack fires BOTH a "message"
+    # event and an "app_mention" event for the same message, causing duplicate
+    # responses.
+    if BOT_USER_ID:
+        text = event.get("text", "")
+        if event.get("channel_type") != "im" and f"<@{BOT_USER_ID}>" in text:
+            return
+
     user_id = event.get("user", "")
     if not is_authorized(user_id):
         log_unauthorized(event)
@@ -657,7 +746,7 @@ def handle_message(event, say):
 
 @app.event("app_mention")
 def handle_mention(event, say):
-    """Handle @Your Bot mentions in channels."""
+    """Handle @bot mentions in channels."""
     user_id = event.get("user", "")
     if not is_authorized(user_id):
         log_unauthorized(event)
@@ -698,7 +787,7 @@ def slack_events():
 
 @flask_app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": "bot"})
+    return jsonify({"status": "ok", "bot": "ai-employee"})
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +796,7 @@ def health():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Your Bot — AI Cofounder")
+    parser = argparse.ArgumentParser(description="AI Employee — Slack Bot powered by Claude Code")
     parser.add_argument(
         "--send", nargs=2, metavar=("USER_ID", "MESSAGE"),
         help="Send a proactive DM and exit",
@@ -759,7 +848,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
     signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
 
-    logger.info(f"Your Bot starting on port {PORT}")
+    logger.info(f"{BOT_DISPLAY_NAME} starting on port {PORT}")
     logger.info(f"Authorized users: {AUTHORIZED_USERS or 'all'}")
     logger.info(f"Project dir: {PROJECT_DIR}")
 
