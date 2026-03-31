@@ -3,35 +3,34 @@
 AI Employee File Explorer — browse your AI employee's machine from any browser on the local network.
 
 Configuration via environment variables:
-  FILE_EXPLORER_BASE_DIR   — root directory to browse (default: user home)
+  FILE_EXPLORER_BASE_DIR   — root directory to browse (default: user's home directory)
   FILE_EXPLORER_PORT       — port to listen on (default: 8888)
-  FILE_EXPLORER_NAME       — display name (default: "Your AI Employee")
+  FILE_EXPLORER_NAME       — display name for your AI employee (default: "Your AI Employee")
   FILE_EXPLORER_TASK_PREFIXES — comma-separated launchd label prefixes to monitor (default: none)
+
+Flask + Waitress edition: threaded, production-grade, handles broken pipes gracefully.
 """
 
 import os
 import json
+import html as html_mod
 import mimetypes
 import urllib.parse
 import plistlib
 import subprocess
 import re
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from flask import Flask, Response, redirect, request, jsonify
 from pathlib import Path
 from datetime import datetime, timedelta
 
-# ============================================================
-# CONFIGURATION — override via environment variables or edit here
-# ============================================================
+app = Flask(__name__)
 
 BASE_DIR = Path(os.environ.get("FILE_EXPLORER_BASE_DIR", str(Path.home())))
 PORT = int(os.environ.get("FILE_EXPLORER_PORT", "8888"))
 DISPLAY_NAME = os.environ.get("FILE_EXPLORER_NAME", "Your AI Employee")
 
-# Only these files can be edited from the browser (absolute paths)
 EDITABLE_FILES = {(BASE_DIR / "CLAUDE.md").resolve()}
 
-# Directories to show in the sidebar
 BOOKMARKS = [
     ("Home", str(BASE_DIR)),
     ("Projects", str(BASE_DIR / "projects")),
@@ -41,6 +40,13 @@ BOOKMARKS = [
     ("Discoveries", str(BASE_DIR / "discoveries")),
     ("Memory", str(BASE_DIR / ".claude" / "projects" / f"-{str(BASE_DIR).replace('/', '-').lstrip('-')}" / "memory")),
 ]
+
+# Task prefixes from env var
+_raw_prefixes = os.environ.get("FILE_EXPLORER_TASK_PREFIXES", "")
+TASK_PREFIXES = tuple(p.strip() for p in _raw_prefixes.split(",") if p.strip()) if _raw_prefixes else ()
+
+# Empty task descriptions dict (users populate this)
+TASK_DESCRIPTIONS = {}
 
 # File extensions to render as text
 TEXT_EXTENSIONS = {
@@ -56,20 +62,6 @@ TEXT_EXTENSIONS = {
 # Directories to skip
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.bundle', 'vendor', 'tmp', 'log'}
 
-# Launchd jobs to show in scheduled tasks (label prefix filters)
-# Set via FILE_EXPLORER_TASK_PREFIXES env var, e.g. "com.myai.,com.cc."
-_raw_prefixes = os.environ.get("FILE_EXPLORER_TASK_PREFIXES", "")
-TASK_PREFIXES = tuple(p.strip() for p in _raw_prefixes.split(",") if p.strip()) if _raw_prefixes else ()
-
-# Human-readable descriptions for specific task labels.
-# Populate this dict with your own task labels and descriptions.
-# Example:
-#   TASK_DESCRIPTIONS = {
-#       'com.myai.morning-brief': 'Sends a morning briefing to the team',
-#       'com.myai.daily-diary': 'Writes an introspective diary entry',
-#   }
-TASK_DESCRIPTIONS = {}
-
 # ============================================================
 # SVG ASSETS — Hand-drawn style icons for the study aesthetic
 # ============================================================
@@ -82,6 +74,7 @@ SIDEBAR_ICONS = {
     "Projects": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5v4"/><circle cx="10" cy="3.5" r="1" fill="currentColor"/><path d="M10 6.5L5.5 17.5"/><path d="M10 6.5l4.5 11"/><path d="M7 13h6"/></svg>',
     "Work": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V4.5c0-.6.4-1 1-1h4l2 2h7c.6 0 1 .4 1 1V15c0 .6-.4 1-1 1h-14c-.6 0-1-.4-1-1V6z"/><path d="M2.5 8h15"/></svg>',
     "Memory": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><circle cx="4" cy="5" r="1.2"/><circle cx="16" cy="4.5" r="1.2"/><circle cx="15" cy="15.5" r="1.2"/><circle cx="5" cy="16" r="1.2"/><path d="M7.8 8.2L5 5.8"/><path d="M12.2 8.2l3-3"/><path d="M12 11.8l2.2 3"/><path d="M8 11.8l-2.2 3.4"/></svg>',
+    "CLAUDE.md": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5V17c0 .3-.2.5-.5.5H5c-.3 0-.5-.2-.5-.5V3c0-.3.2-.5.5-.5z"/><path d="M12 2.5v3.5h3.5"/><path d="M7.5 9h5"/><path d="M7.5 11.5h5"/><path d="M7.5 14h3"/></svg>',
     "Scheduled Tasks": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5v5l3.5 2"/><circle cx="10" cy="10" r=".7" fill="currentColor"/><path d="M10 3v.8"/><path d="M17 10h-.8"/><path d="M10 17v-.8"/><path d="M3 10h.8"/></svg>',
 }
 
@@ -108,6 +101,18 @@ FILE_TYPE_SVGS = {
     '_folder': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v12"/><path d="M4 2h7.5c.6 0 1 .4 1 1v10c0 .6-.4 1-1 1H4"/><path d="M6 2v12"/><path d="M8 5.5h3"/></svg>',
     '_default': '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1.5h5.5l3 3V14c0 .3-.2.5-.5.5H4c-.3 0-.5-.2-.5-.5V2c0-.3.2-.5.5-.5z"/><path d="M9.5 1.5v3h3"/><path d="M6 7.5h4"/><path d="M6 10h2.5"/></svg>',
 }
+
+
+# ============================================================
+# HELPER FUNCTIONS (unchanged from original)
+# ============================================================
+
+def _strip_label_prefixes(label):
+    """Remove configured task prefixes from a label for display."""
+    for prefix in TASK_PREFIXES:
+        if label.startswith(prefix):
+            return label[len(prefix):]
+    return label
 
 
 def get_launchd_jobs():
@@ -297,7 +302,6 @@ def _get_session_dirs():
     """Return all Claude Code session directories to search."""
     base = Path.home() / '.claude' / 'projects'
     dirs = []
-    # Check common session directory patterns
     for d in base.iterdir() if base.exists() else []:
         if d.is_dir() and any(d.glob('*.jsonl')):
             dirs.append(d)
@@ -510,14 +514,6 @@ def smart_date(ts):
     if days < 7:
         return f'{days}d ago'
     return dt.strftime('%b %-d')
-
-
-def _strip_label_prefixes(label):
-    """Remove configured task prefixes from a label for display."""
-    for prefix in TASK_PREFIXES:
-        if label.startswith(prefix):
-            return label[len(prefix):]
-    return label
 
 
 def generate_timeline_svg(jobs):
@@ -1358,7 +1354,7 @@ def make_sidebar(current_path=''):
             active = ' active'
         links.append(f'<a href="/browse{path}" class="{active}"><span class="icon">{icon_svg}</span>{name}</a>')
 
-    # Scheduled Tasks link (only show if task prefixes are configured)
+    # Scheduled Tasks link (only if task prefixes are configured)
     if TASK_PREFIXES:
         tasks_active = ' active' if current_path == 'Scheduled Tasks' or current_path.startswith('Task:') else ''
         tasks_icon = SIDEBAR_ICONS['Scheduled Tasks']
@@ -1389,610 +1385,550 @@ def lang_for_ext(ext):
     return mapping.get(ext, '')
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass  # Suppress access logs
+def _file_icon_svg(name):
+    """Return an SVG icon for a file based on its extension."""
+    ext = Path(name).suffix.lower().lstrip('.')
+    return FILE_TYPE_SVGS.get(ext, FILE_TYPE_SVGS['_default'])
 
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = urllib.parse.unquote(parsed.path)
 
-        if path == '/save':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length)
-            try:
-                data = json.loads(body)
-                file_path = Path(data['path']).resolve()
+def _render_page(path_label, content):
+    """Wrap content in the full HTML template with sidebar and breadcrumb."""
+    page = HTML_TEMPLATE.replace('DISPLAY_NAME_PLACEHOLDER', DISPLAY_NAME)
+    page = page.replace('SIDEBAR_LINKS', make_sidebar(path_label))
+    page = page.replace('BREADCRUMB', make_breadcrumb(path_label))
+    page = page.replace('CONTENT', content)
+    return Response(page, content_type='text/html; charset=utf-8')
 
-                # Only allow editing whitelisted files
-                if file_path not in EDITABLE_FILES:
-                    self._send_json(403, {'ok': False, 'error': 'This file is not editable'})
-                    return
 
-                file_path.write_text(data['content'])
-                self._send_json(200, {'ok': True})
-            except Exception as e:
-                self._send_json(500, {'ok': False, 'error': str(e)})
-            return
-
-        self.send_error(404)
-
-    def _send_json(self, code, obj):
-        self.send_response(code)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(obj).encode())
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = urllib.parse.unquote(parsed.path)
-
-        if path == '/' or path == '':
-            self.send_response(302)
-            self.send_header('Location', f'/browse{BASE_DIR}')
-            self.end_headers()
-            return
-
-        if path == '/tasks':
-            self.serve_tasks()
-            return
-
-        if path.startswith('/tasks/'):
-            label = path[7:]
-            self.serve_task_detail(label)
-            return
-
-        if path.startswith('/raw/'):
-            file_path = '/' + path[5:]
-            self.serve_raw_file(file_path)
-            return
-
-        if path.startswith('/browse'):
-            file_path = path[7:]  # Remove /browse prefix
-            if not file_path:
-                file_path = str(BASE_DIR)
-            self.serve_path(file_path)
-            return
-
-        self.send_response(404)
-        self.send_header('Content-Type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b'Not found')
-
-    def serve_path(self, file_path):
-        p = Path(file_path)
-
-        if not p.exists():
-            self.send_error(404, f"Not found: {file_path}")
-            return
-
-        # Security: must be under BASE_DIR
-        try:
-            p.resolve().relative_to(BASE_DIR.resolve())
-        except ValueError:
-            self.send_error(403, "Access denied")
-            return
-
-        if p.is_dir():
-            self.serve_directory(p)
-        else:
-            self.serve_file(p)
-
-    def serve_directory(self, p):
-        entries = []
-        try:
-            for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-                if item.name in SKIP_DIRS:
-                    continue
-                if item.name.startswith('.') and item.name not in ('.claude',):
-                    continue
-                try:
-                    stat = item.stat()
-                    entries.append({
-                        'name': item.name,
-                        'is_dir': item.is_dir(),
-                        'size': stat.st_size if not item.is_dir() else 0,
-                        'mtime': stat.st_mtime,
-                        'path': str(item),
-                    })
-                except (PermissionError, OSError):
-                    continue
-        except PermissionError:
-            self.send_error(403, "Permission denied")
-            return
-
-        # Check if this is the diary folder
-        is_diary = str(p).rstrip('/').endswith('/diary')
-
-        rows = []
-        for e in entries:
-            icon = FILE_TYPE_SVGS.get('_folder', '') if e['is_dir'] else self._file_icon_svg(e['name'])
-            size = "" if e['is_dir'] else human_size(e['size'])
-            date = smart_date(e['mtime'])
-
-            # Diary special treatment: show human-readable dates
-            display_name = e['name']
-            extra_class = ''
-            if is_diary and re.match(r'^\d{4}-\d{2}-\d{2}\.md$', e['name']):
-                try:
-                    dt = datetime.strptime(e['name'][:10], '%Y-%m-%d')
-                    display_name = dt.strftime('%A, %B %-d, %Y')
-                    extra_class = ' diary-date'
-                except ValueError:
-                    pass
-
-            name_html = f'<a href="/browse{e["path"]}" class="{extra_class}">{display_name}</a>'
-            rows.append(f'''<tr>
-                <td><div class="name"><span class="icon">{icon}</span>{name_html}</div></td>
-                <td class="size">{size}</td>
-                <td class="date">{date}</td>
-            </tr>''')
-
-        # Hero section for home page
-        hero_html = ''
-        if str(p) == str(BASE_DIR):
-            hero_html = self._home_hero()
-
-        content = f'''{hero_html}<div class="listing"><table>
-            <tbody>{"".join(rows)}</tbody>
-        </table></div>'''
-
-        self._send_html(str(p), content)
-
-    def _home_hero(self):
-        """Return hero HTML for the home page. Uses hero image if available, otherwise a text greeting."""
-        # Look for a hero image in the same directory as this script
-        script_dir = Path(__file__).parent
-        hero_img = script_dir / 'hero.png'
-        if not hero_img.exists():
-            hero_img = script_dir / 'hero.jpg'
-        if hero_img.exists():
-            return f'''<div class="hero-section">
-                <img src="/raw{hero_img}" alt="{DISPLAY_NAME}">
-            </div>'''
-        # Fallback: a warm text-based header
-        now = datetime.now()
-        hour = now.hour
-        if hour < 12:
-            greeting = 'Good morning'
-        elif hour < 17:
-            greeting = 'Good afternoon'
-        else:
-            greeting = 'Good evening'
-        return f'''<div class="hero-section" style="text-align:left; padding-bottom:16px; border-bottom:1px solid var(--border-subtle); margin-bottom:8px;">
-            <div style="font-family:var(--font-prose); font-size:20px; color:var(--accent); margin-bottom:4px;">{greeting}.</div>
-            <div style="font-family:var(--font-prose); font-size:14px; color:var(--text-secondary);">Welcome to {DISPLAY_NAME}\'s workspace.</div>
+def _home_hero():
+    """Return hero HTML for the home page."""
+    script_dir = Path(__file__).parent
+    hero_img = script_dir / 'hero.png'
+    if not hero_img.exists():
+        hero_img = script_dir / 'hero.jpg'
+    if hero_img.exists():
+        return f'''<div class="hero-section">
+            <img src="/raw{hero_img}" alt="{DISPLAY_NAME}">
         </div>'''
+    now = datetime.now()
+    hour = now.hour
+    if hour < 12:
+        greeting = 'Good morning'
+    elif hour < 17:
+        greeting = 'Good afternoon'
+    else:
+        greeting = 'Good evening'
+    return f'''<div class="hero-section" style="text-align:left; padding-bottom:16px; border-bottom:1px solid var(--border-subtle); margin-bottom:8px;">
+        <div style="font-family:var(--font-prose); font-size:20px; color:var(--accent); margin-bottom:4px;">{greeting}.</div>
+        <div style="font-family:var(--font-prose); font-size:14px; color:var(--text-secondary);">Welcome to {DISPLAY_NAME}\'s workspace.</div>
+    </div>'''
 
-    def serve_raw_file(self, file_path):
-        """Serve a file with its native MIME type (used for iframe rendering)."""
-        p = Path(file_path)
-        if not p.exists():
-            self.send_error(404, f"Not found: {file_path}")
-            return
-        try:
-            p.resolve().relative_to(BASE_DIR.resolve())
-        except ValueError:
-            self.send_error(403, "Access denied")
-            return
-        mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
-        self.send_response(200)
-        self.send_header('Content-Type', mime)
-        self.end_headers()
-        self.wfile.write(p.read_bytes())
 
-    def serve_file(self, p):
-        ext = p.suffix.lower()
+# ============================================================
+# FLASK ROUTES
+# ============================================================
 
-        # For images, serve raw
-        if ext in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'):
-            mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
-            self.send_response(200)
-            self.send_header('Content-Type', mime)
-            self.end_headers()
-            self.wfile.write(p.read_bytes())
-            return
+@app.route('/')
+def index():
+    return redirect(f'/browse{BASE_DIR}')
 
-        # For text files, render in the explorer
-        if ext in TEXT_EXTENSIONS or ext == '':
-            try:
-                text = p.read_text(errors='replace')
-            except Exception as e:
-                self.send_error(500, str(e))
-                return
 
-            if ext == '.md':
-                # Markdown: render with marked.js
-                import html
-                escaped = html.escape(text)
-                is_editable = p.resolve() in EDITABLE_FILES
-                edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html.escape(str(p))}">Edit</button>' if is_editable else ''
-                edit_area = '''<div id="edit-area" style="display:none;">
-                    <textarea id="edit-textarea" class="edit-textarea"></textarea>
-                    <div class="edit-bar" style="margin-top:12px;">
-                        <button id="btn-save" class="btn-save">Save</button>
-                        <button id="btn-cancel" class="btn-cancel">Cancel</button>
-                        <span id="save-status" class="save-status"></span>
-                    </div>
-                </div>''' if is_editable else ''
-                content = f'''<div class="file-content">
-                    <div class="edit-bar">
-                        <span class="filename" style="margin-bottom:0; padding-bottom:0; border-bottom:none;">{p.name} &middot; {human_size(p.stat().st_size)}</span>
-                        {edit_button}
-                    </div>
-                    <script id="markdown-raw" type="text/plain">{escaped}</script>
-                    <div id="markdown-rendered" class="markdown-body"></div>
-                    {edit_area}
-                </div>'''
-            elif ext == '.html':
-                # HTML: render in iframe with toggle to view source
-                import html as html_mod
-                lang = lang_for_ext(ext)
-                escaped = html_mod.escape(text)
-                raw_url = f'/raw{p}'
-                content = f'''<div class="file-content">
-                    <div class="filename" style="display:flex; align-items:center; gap:12px;">
-                        {p.name} &middot; {human_size(p.stat().st_size)}
-                        <div style="display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; font-size:12px; margin-left:auto;">
-                            <button id="btn-render" onclick="toggleHtmlView('render')" style="padding:4px 12px; background:var(--accent); color:var(--bg-primary); border:none; cursor:pointer; font-family:var(--font-mono); font-size:12px;">Render</button>
-                            <button id="btn-code" onclick="toggleHtmlView('code')" style="padding:4px 12px; background:transparent; color:var(--text-secondary); border:none; cursor:pointer; font-family:var(--font-mono); font-size:12px;">Code</button>
-                        </div>
-                    </div>
-                    <div id="html-render-view">
-                        <iframe src="{raw_url}" style="width:100%; height:80vh; border:1px solid var(--border-subtle); border-radius:6px; background:#fff;"></iframe>
-                    </div>
-                    <div id="html-code-view" style="display:none;">
-                        <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
-                    </div>
-                </div>
-                <script>
-                function toggleHtmlView(mode) {{
-                    var renderView = document.getElementById('html-render-view');
-                    var codeView = document.getElementById('html-code-view');
-                    var btnRender = document.getElementById('btn-render');
-                    var btnCode = document.getElementById('btn-code');
-                    if (mode === 'render') {{
-                        renderView.style.display = '';
-                        codeView.style.display = 'none';
-                        btnRender.style.background = 'var(--accent)';
-                        btnRender.style.color = 'var(--bg-primary)';
-                        btnCode.style.background = 'transparent';
-                        btnCode.style.color = 'var(--text-secondary)';
-                    }} else {{
-                        renderView.style.display = 'none';
-                        codeView.style.display = '';
-                        btnCode.style.background = 'var(--accent)';
-                        btnCode.style.color = 'var(--bg-primary)';
-                        btnRender.style.background = 'transparent';
-                        btnRender.style.color = 'var(--text-secondary)';
-                        if (typeof hljs !== 'undefined') hljs.highlightAll();
-                    }}
-                }}
-                </script>'''
-            else:
-                # Code: render with highlight.js
-                import html
-                lang = lang_for_ext(ext)
-                escaped = html.escape(text)
-                content = f'''<div class="file-content">
-                    <div class="filename">{p.name} &middot; {human_size(p.stat().st_size)}</div>
-                    <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
-                </div>'''
+@app.route('/save', methods=['POST'])
+def save_file():
+    try:
+        data = request.get_json()
+        file_path = Path(data['path']).resolve()
 
-            self._send_html(str(p), content)
-            return
+        if file_path not in EDITABLE_FILES:
+            return jsonify(ok=False, error='This file is not editable'), 403
 
-        # Binary files: download
-        mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
-        self.send_response(200)
-        self.send_header('Content-Type', mime)
-        self.send_header('Content-Disposition', f'attachment; filename="{p.name}"')
-        self.end_headers()
-        self.wfile.write(p.read_bytes())
+        file_path.write_text(data['content'])
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
 
-    def serve_tasks(self):
-        jobs = get_launchd_jobs()
 
-        # Generate timeline SVG
-        timeline_html = generate_timeline_svg(jobs)
+@app.route('/tasks')
+def serve_tasks():
+    jobs = get_launchd_jobs()
 
-        cards = []
-        for job in jobs:
-            # Friendly name from label
-            name = _strip_label_prefixes(job['label']).replace('-', ' ').title()
+    # Generate timeline SVG
+    timeline_html = generate_timeline_svg(jobs)
 
-            if job['keep_alive'] or job['is_running']:
-                dot_class = 'amber'
-                sched_class = 'running'
-                sched_label = 'Always running'
-                card_status = 'status-running'
-            elif job['is_loaded']:
-                dot_class = 'green'
-                sched_class = 'scheduled'
-                sched_label = job['schedule']
-                card_status = 'status-loaded'
-            else:
-                dot_class = 'gray'
-                sched_class = 'scheduled'
-                sched_label = job['schedule']
-                card_status = ''
+    cards = []
+    for job in jobs:
+        name = _strip_label_prefixes(job['label']).replace('-', ' ').title()
 
-            last_run_str = ''
-            if job['last_run']:
-                last_run_str = f'{_time_ago(job["last_run"])}'
-
-            cards.append(f'''<a href="/tasks/{job['label']}" style="text-decoration:none; color:inherit;">
-                <div class="task-card {card_status}">
-                    <div class="task-name"><span class="status-dot {dot_class}"></span>{name}</div>
-                    <div class="task-desc">{job['description']}</div>
-                    <div class="task-meta">
-                        <span class="task-schedule {sched_class}">{sched_label}</span>
-                        <span class="task-last-run">{last_run_str}</span>
-                    </div>
-                </div>
-            </a>''')
-
-        content = f'''<div class="tasks-page">
-            <h1>Scheduled Tasks</h1>
-            <div class="subtitle">{DISPLAY_NAME}'s daily rhythm</div>
-            {timeline_html}
-            <div class="task-grid">{"".join(cards)}</div>
-        </div>'''
-
-        self._send_html('Scheduled Tasks', content)
-
-    def serve_task_detail(self, label):
-        jobs = get_launchd_jobs()
-        job = None
-        for j in jobs:
-            if j['label'] == label:
-                job = j
-                break
-
-        if not job:
-            self.send_error(404, f"Task not found: {label}")
-            return
-
-        import html as html_mod
-        name = _strip_label_prefixes(label).replace('-', ' ').title()
-
-        # Extract claude -p prompt if this is a claude task
-        prompt = extract_claude_prompt(job['script']) if job['script'] else None
-
-        # Get run history WITH output extraction
-        runs = get_run_history(prompt, with_output=True)
-
-        # --- Status bar components ---
-        is_running = job['is_running'] or job['keep_alive']
-        if is_running:
-            status_chip = '<span class="status-chip"><span class="status-dot amber"></span>Running</span>'
+        if job['keep_alive'] or job['is_running']:
+            dot_class = 'amber'
+            sched_class = 'running'
+            sched_label = 'Always running'
+            card_status = 'status-running'
         elif job['is_loaded']:
-            status_chip = '<span class="status-chip"><span class="status-dot green"></span>Loaded</span>'
+            dot_class = 'green'
+            sched_class = 'scheduled'
+            sched_label = job['schedule']
+            card_status = 'status-loaded'
         else:
-            status_chip = '<span class="status-chip"><span class="status-dot gray"></span>Not loaded</span>'
+            dot_class = 'gray'
+            sched_class = 'scheduled'
+            sched_label = job['schedule']
+            card_status = ''
 
-        sched_class = 'always' if ('Always' in job['schedule'] or is_running) else ''
-        schedule_chip = f'<span class="schedule-chip {sched_class}">{job["schedule"]}</span>'
+        last_run_str = ''
+        if job['last_run']:
+            last_run_str = f'{_time_ago(job["last_run"])}'
 
-        # Next run countdown
-        next_run_html = ''
-        next_info = get_next_run_time(job['schedule'])
-        if next_info:
-            _, human = next_info
-            next_run_html = f'''<span class="divider"></span>
-                <span class="next-run">Next in <span class="countdown">{human}</span></span>'''
-
-        # Reliability strip
-        strip_html = ''
-        if prompt:
-            strip = get_reliability_strip(prompt)
-            today = datetime.now().date()
-            dots = []
-            for d, ran in strip:
-                classes = 'strip-dot'
-                classes += ' ran' if ran else ' missed'
-                if d == today:
-                    classes += ' today'
-                day_label = d.strftime('%b %-d')
-                dots.append(f'<span class="{classes}" title="{day_label}"></span>')
-            strip_html = f'''<span class="divider"></span>
-                <span class="reliability-strip">
-                    <span class="strip-label">14d</span>
-                    {"".join(dots)}
-                </span>'''
-
-        status_bar = f'''<div class="task-status-bar">
-            {status_chip}
-            {schedule_chip}
-            {next_run_html}
-            {strip_html}
-        </div>'''
-
-        # --- Latest output hero ---
-        latest_html = ''
-        if runs and runs[0].get('output'):
-            latest = runs[0]
-            ago = _time_ago(latest['time'])
-            time_str = latest['time'].strftime('%b %d at %H:%M')
-            # Convert markdown-like output to safe HTML
-            output_escaped = html_mod.escape(latest['output'])
-            # Preserve paragraph breaks
-            output_formatted = output_escaped.replace('\n\n', '</p><p>').replace('\n', '<br>')
-            output_formatted = f'<p>{output_formatted}</p>'
-            # Bold markdown **text**
-            output_formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', output_formatted)
-
-            latest_html = f'''<div class="latest-output">
-                <div class="section-label"><span class="pulse-dot"></span> Latest Output</div>
-                <div class="output-card">
-                    <div class="output-meta">
-                        <span class="timestamp">{time_str}</span>
-                        <span>{ago}</span>
-                    </div>
-                    <div class="output-text" id="latest-text">{output_formatted}</div>
-                    <button class="expand-btn" onclick="
-                        var el = document.getElementById('latest-text');
-                        el.classList.toggle('expanded');
-                        this.textContent = el.classList.contains('expanded') ? '↑ Collapse' : '↓ Show more';
-                    ">↓ Show more</button>
-                </div>
-            </div>'''
-        elif not runs:
-            latest_html = f'''<div class="latest-output">
-                <div class="section-label">Latest Output</div>
-                <div class="output-card">
-                    <div class="no-output">No recorded runs yet. This task hasn't been matched to any Claude Code sessions.</div>
-                </div>
-            </div>'''
-
-        # --- Output feed (past runs) ---
-        feed_html = ''
-        feed_runs = runs[1:7] if len(runs) > 1 else []  # skip latest (shown in hero), show next 6
-        if feed_runs:
-            items = []
-            for i, run in enumerate(feed_runs):
-                ago = _time_ago(run['time'])
-                time_str = run['time'].strftime('%b %d, %H:%M')
-                summary = ''
-                full_output = ''
-                if run.get('output'):
-                    # First 150 chars as summary
-                    raw = run['output']
-                    summary_text = raw[:200].replace('\n', ' ').strip()
-                    if len(raw) > 200:
-                        summary_text += '...'
-                    summary = html_mod.escape(summary_text)
-                    full_escaped = html_mod.escape(raw)
-                    full_formatted = full_escaped.replace('\n\n', '</p><p>').replace('\n', '<br>')
-                    full_formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', full_formatted)
-                    full_output = f'<div class="feed-full"><p>{full_formatted}</p></div>'
-                else:
-                    summary = '<em style="color:var(--text-tertiary)">Session found, output not extracted</em>'
-
-                items.append(f'''<div class="feed-item" onclick="this.classList.toggle('expanded')">
-                    <div class="feed-meta">
-                        <span>{time_str}</span>
-                        <span class="feed-ago">{ago}</span>
-                    </div>
-                    <div class="feed-summary">{summary}</div>
-                    {full_output}
-                </div>''')
-
-            feed_html = f'''<div class="output-feed">
-                <div class="section-label">Recent Runs <span style="font-weight:normal; opacity:0.6;">({len(runs)} in last 14 days)</span></div>
-                <div class="feed-timeline">{"".join(items)}</div>
-            </div>'''
-
-        # --- Collapsible config section ---
-        script_link = f'<a href="/browse{job["script"]}">{job["script"]}</a>' if job['script'] else '&mdash;'
-        plist_link = f'<a href="/browse{job["plist_path"]}">{Path(job["plist_path"]).name}</a>'
-        last_run_text = job['last_run'].strftime('%b %d, %Y at %H:%M') if job['last_run'] else 'Never'
-
-        # Prompt
-        prompt_html = ''
-        if prompt:
-            escaped_prompt = html_mod.escape(prompt)
-            highlighted_prompt = re.sub(
-                r'\$\{?\w+\}?',
-                lambda m: f'<span class="bash-var">{m.group()}</span>',
-                escaped_prompt
-            )
-            prompt_html = f'''<div class="prompt-section">
-                <h3>Prompt</h3>
-                <div class="prompt-box">{highlighted_prompt}</div>
-            </div>'''
-
-        # Logs
-        stdout_content = ''
-        stderr_content = ''
-        if job['stdout_log'] and Path(job['stdout_log']).exists():
-            try:
-                lines = Path(job['stdout_log']).read_text(errors='replace').strip().splitlines()
-                stdout_content = html_mod.escape('\n'.join(lines[-100:])) if lines else '<span class="log-empty">Empty</span>'
-            except Exception:
-                stdout_content = '<span class="log-empty">Could not read</span>'
-        else:
-            stdout_content = '<span class="log-empty">No log file</span>'
-
-        if job['stderr_log'] and Path(job['stderr_log']).exists():
-            try:
-                lines = Path(job['stderr_log']).read_text(errors='replace').strip().splitlines()
-                stderr_content = html_mod.escape('\n'.join(lines[-100:])) if lines else '<span class="log-empty">Empty</span>'
-            except Exception:
-                stderr_content = '<span class="log-empty">Could not read</span>'
-        else:
-            stderr_content = '<span class="log-empty">No log file</span>'
-
-        config_html = f'''<div class="config-section">
-            <button class="config-toggle" onclick="
-                this.classList.toggle('open');
-                this.nextElementSibling.classList.toggle('open');
-            "><span class="chevron">&#9654;</span> Configuration &amp; Logs</button>
-            <div class="config-body">
-                <div class="detail-grid">
-                    <div class="detail-item">
-                        <div class="label">Label</div>
-                        <div class="value">{label}</div>
-                    </div>
-                    <div class="detail-item">
-                        <div class="label">Last Activity</div>
-                        <div class="value">{last_run_text}</div>
-                    </div>
-                    <div class="detail-item">
-                        <div class="label">Script</div>
-                        <div class="value">{script_link}</div>
-                    </div>
-                    <div class="detail-item">
-                        <div class="label">Plist</div>
-                        <div class="value">{plist_link}</div>
-                    </div>
-                </div>
-                {prompt_html}
-                <div class="log-section">
-                    <h3>stdout</h3>
-                    <div class="log-box">{stdout_content}</div>
-                </div>
-                <div class="log-section">
-                    <h3>stderr</h3>
-                    <div class="log-box">{stderr_content}</div>
-                </div>
-            </div>
-        </div>'''
-
-        content = f'''<div class="task-detail">
-            <a href="/tasks" class="task-detail-back">&larr; Back to all tasks</a>
-            <div class="task-detail-header">
-                <h1>{name}</h1>
+        cards.append(f'''<a href="/tasks/{job['label']}" style="text-decoration:none; color:inherit;">
+            <div class="task-card {card_status}">
+                <div class="task-name"><span class="status-dot {dot_class}"></span>{name}</div>
                 <div class="task-desc">{job['description']}</div>
+                <div class="task-meta">
+                    <span class="task-schedule {sched_class}">{sched_label}</span>
+                    <span class="task-last-run">{last_run_str}</span>
+                </div>
             </div>
-            {status_bar}
-            {latest_html}
-            {feed_html}
-            {config_html}
+        </a>''')
+
+    content = f'''<div class="tasks-page">
+        <h1>Scheduled Tasks</h1>
+        <div class="subtitle">{DISPLAY_NAME}'s daily rhythm</div>
+        {timeline_html}
+        <div class="task-grid">{"".join(cards)}</div>
+    </div>'''
+
+    return _render_page('Scheduled Tasks', content)
+
+
+@app.route('/tasks/<path:label>')
+def serve_task_detail(label):
+    jobs = get_launchd_jobs()
+    job = None
+    for j in jobs:
+        if j['label'] == label:
+            job = j
+            break
+
+    if not job:
+        return Response(f'Task not found: {label}', status=404)
+
+    name = _strip_label_prefixes(label).replace('-', ' ').title()
+
+    # Extract claude -p prompt if this is a claude task
+    prompt = extract_claude_prompt(job['script']) if job['script'] else None
+
+    # Get run history WITH output extraction
+    runs = get_run_history(prompt, with_output=True)
+
+    # --- Status bar components ---
+    is_running = job['is_running'] or job['keep_alive']
+    if is_running:
+        status_chip = '<span class="status-chip"><span class="status-dot amber"></span>Running</span>'
+    elif job['is_loaded']:
+        status_chip = '<span class="status-chip"><span class="status-dot green"></span>Loaded</span>'
+    else:
+        status_chip = '<span class="status-chip"><span class="status-dot gray"></span>Not loaded</span>'
+
+    sched_class = 'always' if ('Always' in job['schedule'] or is_running) else ''
+    schedule_chip = f'<span class="schedule-chip {sched_class}">{job["schedule"]}</span>'
+
+    # Next run countdown
+    next_run_html = ''
+    next_info = get_next_run_time(job['schedule'])
+    if next_info:
+        _, human = next_info
+        next_run_html = f'''<span class="divider"></span>
+            <span class="next-run">Next in <span class="countdown">{human}</span></span>'''
+
+    # Reliability strip
+    strip_html = ''
+    if prompt:
+        strip = get_reliability_strip(prompt)
+        today = datetime.now().date()
+        dots = []
+        for d, ran in strip:
+            classes = 'strip-dot'
+            classes += ' ran' if ran else ' missed'
+            if d == today:
+                classes += ' today'
+            day_label = d.strftime('%b %-d')
+            dots.append(f'<span class="{classes}" title="{day_label}"></span>')
+        strip_html = f'''<span class="divider"></span>
+            <span class="reliability-strip">
+                <span class="strip-label">14d</span>
+                {"".join(dots)}
+            </span>'''
+
+    status_bar = f'''<div class="task-status-bar">
+        {status_chip}
+        {schedule_chip}
+        {next_run_html}
+        {strip_html}
+    </div>'''
+
+    # --- Latest output hero ---
+    latest_html = ''
+    if runs and runs[0].get('output'):
+        latest = runs[0]
+        ago = _time_ago(latest['time'])
+        time_str = latest['time'].strftime('%b %d at %H:%M')
+        output_escaped = html_mod.escape(latest['output'])
+        output_formatted = output_escaped.replace('\n\n', '</p><p>').replace('\n', '<br>')
+        output_formatted = f'<p>{output_formatted}</p>'
+        output_formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', output_formatted)
+
+        latest_html = f'''<div class="latest-output">
+            <div class="section-label"><span class="pulse-dot"></span> Latest Output</div>
+            <div class="output-card">
+                <div class="output-meta">
+                    <span class="timestamp">{time_str}</span>
+                    <span>{ago}</span>
+                </div>
+                <div class="output-text" id="latest-text">{output_formatted}</div>
+                <button class="expand-btn" onclick="
+                    var el = document.getElementById('latest-text');
+                    el.classList.toggle('expanded');
+                    this.textContent = el.classList.contains('expanded') ? '\\u2191 Collapse' : '\\u2193 Show more';
+                ">&#8595; Show more</button>
+            </div>
+        </div>'''
+    elif not runs:
+        latest_html = f'''<div class="latest-output">
+            <div class="section-label">Latest Output</div>
+            <div class="output-card">
+                <div class="no-output">No recorded runs yet. This task hasn't been matched to any Claude Code sessions.</div>
+            </div>
         </div>'''
 
-        self._send_html(f'Task: {name}', content)
+    # --- Output feed (past runs) ---
+    feed_html = ''
+    feed_runs = runs[1:7] if len(runs) > 1 else []
+    if feed_runs:
+        items = []
+        for i, run in enumerate(feed_runs):
+            ago = _time_ago(run['time'])
+            time_str = run['time'].strftime('%b %d, %H:%M')
+            summary = ''
+            full_output = ''
+            if run.get('output'):
+                raw = run['output']
+                summary_text = raw[:200].replace('\n', ' ').strip()
+                if len(raw) > 200:
+                    summary_text += '...'
+                summary = html_mod.escape(summary_text)
+                full_escaped = html_mod.escape(raw)
+                full_formatted = full_escaped.replace('\n\n', '</p><p>').replace('\n', '<br>')
+                full_formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', full_formatted)
+                full_output = f'<div class="feed-full"><p>{full_formatted}</p></div>'
+            else:
+                summary = '<em style="color:var(--text-tertiary)">Session found, output not extracted</em>'
 
-    def _file_icon_svg(self, name):
-        """Return an SVG icon for a file based on its extension."""
-        ext = Path(name).suffix.lower().lstrip('.')
-        return FILE_TYPE_SVGS.get(ext, FILE_TYPE_SVGS['_default'])
+            items.append(f'''<div class="feed-item" onclick="this.classList.toggle('expanded')">
+                <div class="feed-meta">
+                    <span>{time_str}</span>
+                    <span class="feed-ago">{ago}</span>
+                </div>
+                <div class="feed-summary">{summary}</div>
+                {full_output}
+            </div>''')
 
-    def _send_html(self, path, content):
-        html = HTML_TEMPLATE.replace('DISPLAY_NAME_PLACEHOLDER', DISPLAY_NAME)
-        html = html.replace('SIDEBAR_LINKS', make_sidebar(path))
-        html = html.replace('BREADCRUMB', make_breadcrumb(path))
-        html = html.replace('CONTENT', content)
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(html.encode())
+        feed_html = f'''<div class="output-feed">
+            <div class="section-label">Recent Runs <span style="font-weight:normal; opacity:0.6;">({len(runs)} in last 14 days)</span></div>
+            <div class="feed-timeline">{"".join(items)}</div>
+        </div>'''
 
+    # --- Collapsible config section ---
+    script_link = f'<a href="/browse{job["script"]}">{job["script"]}</a>' if job['script'] else '&mdash;'
+    plist_link = f'<a href="/browse{job["plist_path"]}">{Path(job["plist_path"]).name}</a>'
+    last_run_text = job['last_run'].strftime('%b %d, %Y at %H:%M') if job['last_run'] else 'Never'
+
+    prompt_html = ''
+    if prompt:
+        escaped_prompt = html_mod.escape(prompt)
+        highlighted_prompt = re.sub(
+            r'\$\{?\w+\}?',
+            lambda m: f'<span class="bash-var">{m.group()}</span>',
+            escaped_prompt
+        )
+        prompt_html = f'''<div class="prompt-section">
+            <h3>Prompt</h3>
+            <div class="prompt-box">{highlighted_prompt}</div>
+        </div>'''
+
+    # Logs
+    stdout_content = ''
+    stderr_content = ''
+    if job['stdout_log'] and Path(job['stdout_log']).exists():
+        try:
+            lines = Path(job['stdout_log']).read_text(errors='replace').strip().splitlines()
+            stdout_content = html_mod.escape('\n'.join(lines[-100:])) if lines else '<span class="log-empty">Empty</span>'
+        except Exception:
+            stdout_content = '<span class="log-empty">Could not read</span>'
+    else:
+        stdout_content = '<span class="log-empty">No log file</span>'
+
+    if job['stderr_log'] and Path(job['stderr_log']).exists():
+        try:
+            lines = Path(job['stderr_log']).read_text(errors='replace').strip().splitlines()
+            stderr_content = html_mod.escape('\n'.join(lines[-100:])) if lines else '<span class="log-empty">Empty</span>'
+        except Exception:
+            stderr_content = '<span class="log-empty">Could not read</span>'
+    else:
+        stderr_content = '<span class="log-empty">No log file</span>'
+
+    config_html = f'''<div class="config-section">
+        <button class="config-toggle" onclick="
+            this.classList.toggle('open');
+            this.nextElementSibling.classList.toggle('open');
+        "><span class="chevron">&#9654;</span> Configuration &amp; Logs</button>
+        <div class="config-body">
+            <div class="detail-grid">
+                <div class="detail-item">
+                    <div class="label">Label</div>
+                    <div class="value">{label}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Last Activity</div>
+                    <div class="value">{last_run_text}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Script</div>
+                    <div class="value">{script_link}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Plist</div>
+                    <div class="value">{plist_link}</div>
+                </div>
+            </div>
+            {prompt_html}
+            <div class="log-section">
+                <h3>stdout</h3>
+                <div class="log-box">{stdout_content}</div>
+            </div>
+            <div class="log-section">
+                <h3>stderr</h3>
+                <div class="log-box">{stderr_content}</div>
+            </div>
+        </div>
+    </div>'''
+
+    content = f'''<div class="task-detail">
+        <a href="/tasks" class="task-detail-back">&larr; Back to all tasks</a>
+        <div class="task-detail-header">
+            <h1>{name}</h1>
+            <div class="task-desc">{job['description']}</div>
+        </div>
+        {status_bar}
+        {latest_html}
+        {feed_html}
+        {config_html}
+    </div>'''
+
+    return _render_page(f'Task: {name}', content)
+
+
+@app.route('/raw/<path:filepath>')
+def serve_raw_file(filepath):
+    """Serve a file with its native MIME type."""
+    p = Path('/' + filepath)
+    if not p.exists():
+        return Response(f'Not found: {filepath}', status=404)
+    try:
+        p.resolve().relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return Response('Access denied', status=403)
+    mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+    return Response(p.read_bytes(), content_type=mime)
+
+
+@app.route('/browse')
+@app.route('/browse/<path:filepath>')
+def serve_browse(filepath=''):
+    file_path = '/' + filepath if filepath else str(BASE_DIR)
+    p = Path(file_path)
+
+    if not p.exists():
+        return Response(f'Not found: {file_path}', status=404)
+
+    # Security: must be under BASE_DIR
+    try:
+        p.resolve().relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return Response('Access denied', status=403)
+
+    if p.is_dir():
+        return _serve_directory(p)
+    else:
+        return _serve_file(p)
+
+
+def _serve_directory(p):
+    entries = []
+    try:
+        for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            if item.name in SKIP_DIRS:
+                continue
+            if item.name.startswith('.') and item.name not in ('.claude',):
+                continue
+            try:
+                stat = item.stat()
+                entries.append({
+                    'name': item.name,
+                    'is_dir': item.is_dir(),
+                    'size': stat.st_size if not item.is_dir() else 0,
+                    'mtime': stat.st_mtime,
+                    'path': str(item),
+                })
+            except (PermissionError, OSError):
+                continue
+    except PermissionError:
+        return Response('Permission denied', status=403)
+
+    # Check if this is the diary folder
+    is_diary = str(p).rstrip('/').endswith('/diary')
+
+    rows = []
+    for e in entries:
+        icon = FILE_TYPE_SVGS.get('_folder', '') if e['is_dir'] else _file_icon_svg(e['name'])
+        size = "" if e['is_dir'] else human_size(e['size'])
+        date = smart_date(e['mtime'])
+
+        # Diary special treatment: show human-readable dates
+        display_name = e['name']
+        extra_class = ''
+        if is_diary and re.match(r'^\d{4}-\d{2}-\d{2}\.md$', e['name']):
+            try:
+                dt = datetime.strptime(e['name'][:10], '%Y-%m-%d')
+                display_name = dt.strftime('%A, %B %-d, %Y')
+                extra_class = ' diary-date'
+            except ValueError:
+                pass
+
+        name_html = f'<a href="/browse{e["path"]}" class="{extra_class}">{display_name}</a>'
+        rows.append(f'''<tr>
+            <td><div class="name"><span class="icon">{icon}</span>{name_html}</div></td>
+            <td class="size">{size}</td>
+            <td class="date">{date}</td>
+        </tr>''')
+
+    # Hero section for home page
+    hero_html = ''
+    if str(p) == str(BASE_DIR):
+        hero_html = _home_hero()
+
+    content = f'''{hero_html}<div class="listing"><table>
+        <tbody>{"".join(rows)}</tbody>
+    </table></div>'''
+
+    return _render_page(str(p), content)
+
+
+def _serve_file(p):
+    ext = p.suffix.lower()
+
+    # For images, serve raw
+    if ext in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'):
+        mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+        return Response(p.read_bytes(), content_type=mime)
+
+    # For text files, render in the explorer
+    if ext in TEXT_EXTENSIONS or ext == '':
+        try:
+            text = p.read_text(errors='replace')
+        except Exception as e:
+            return Response(str(e), status=500)
+
+        if ext == '.md':
+            escaped = html_mod.escape(text)
+            is_editable = p.resolve() in EDITABLE_FILES
+            edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html_mod.escape(str(p))}">Edit</button>' if is_editable else ''
+            edit_area = '''<div id="edit-area" style="display:none;">
+                <textarea id="edit-textarea" class="edit-textarea"></textarea>
+                <div class="edit-bar" style="margin-top:12px;">
+                    <button id="btn-save" class="btn-save">Save</button>
+                    <button id="btn-cancel" class="btn-cancel">Cancel</button>
+                    <span id="save-status" class="save-status"></span>
+                </div>
+            </div>''' if is_editable else ''
+            content = f'''<div class="file-content">
+                <div class="edit-bar">
+                    <span class="filename" style="margin-bottom:0; padding-bottom:0; border-bottom:none;">{p.name} &middot; {human_size(p.stat().st_size)}</span>
+                    {edit_button}
+                </div>
+                <script id="markdown-raw" type="text/plain">{escaped}</script>
+                <div id="markdown-rendered" class="markdown-body"></div>
+                {edit_area}
+            </div>'''
+        elif ext == '.html':
+            lang = lang_for_ext(ext)
+            escaped = html_mod.escape(text)
+            raw_url = f'/raw{p}'
+            content = f'''<div class="file-content">
+                <div class="filename" style="display:flex; align-items:center; gap:12px;">
+                    {p.name} &middot; {human_size(p.stat().st_size)}
+                    <div style="display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; font-size:12px; margin-left:auto;">
+                        <button id="btn-render" onclick="toggleHtmlView('render')" style="padding:4px 12px; background:var(--accent); color:var(--bg-primary); border:none; cursor:pointer; font-family:var(--font-mono); font-size:12px;">Render</button>
+                        <button id="btn-code" onclick="toggleHtmlView('code')" style="padding:4px 12px; background:transparent; color:var(--text-secondary); border:none; cursor:pointer; font-family:var(--font-mono); font-size:12px;">Code</button>
+                    </div>
+                </div>
+                <div id="html-render-view">
+                    <iframe src="{raw_url}" style="width:100%; height:80vh; border:1px solid var(--border-subtle); border-radius:6px; background:#fff;"></iframe>
+                </div>
+                <div id="html-code-view" style="display:none;">
+                    <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
+                </div>
+            </div>
+            <script>
+            function toggleHtmlView(mode) {{
+                var renderView = document.getElementById('html-render-view');
+                var codeView = document.getElementById('html-code-view');
+                var btnRender = document.getElementById('btn-render');
+                var btnCode = document.getElementById('btn-code');
+                if (mode === 'render') {{
+                    renderView.style.display = '';
+                    codeView.style.display = 'none';
+                    btnRender.style.background = 'var(--accent)';
+                    btnRender.style.color = 'var(--bg-primary)';
+                    btnCode.style.background = 'transparent';
+                    btnCode.style.color = 'var(--text-secondary)';
+                }} else {{
+                    renderView.style.display = 'none';
+                    codeView.style.display = '';
+                    btnCode.style.background = 'var(--accent)';
+                    btnCode.style.color = 'var(--bg-primary)';
+                    btnRender.style.background = 'transparent';
+                    btnRender.style.color = 'var(--text-secondary)';
+                    if (typeof hljs !== 'undefined') hljs.highlightAll();
+                }}
+            }}
+            </script>'''
+        else:
+            lang = lang_for_ext(ext)
+            escaped = html_mod.escape(text)
+            content = f'''<div class="file-content">
+                <div class="filename">{p.name} &middot; {human_size(p.stat().st_size)}</div>
+                <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
+            </div>'''
+
+        return _render_page(str(p), content)
+
+    # Binary files: download
+    mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+    return Response(
+        p.read_bytes(),
+        content_type=mime,
+        headers={'Content-Disposition': f'attachment; filename="{p.name}"'}
+    )
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == '__main__':
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    from waitress import serve
     print(f"File Explorer running on port {PORT}")
     print(f"  Base directory: {BASE_DIR}")
     if TASK_PREFIXES:
         print(f"  Monitoring tasks: {', '.join(TASK_PREFIXES)}")
-    server.serve_forever()
+    serve(app, host="0.0.0.0", port=PORT, threads=8)

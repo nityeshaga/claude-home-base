@@ -2,11 +2,12 @@
 
 A beautiful, self-contained file browser for your AI employee's machine. Browse files, render markdown, view code with syntax highlighting, and monitor launchd scheduled tasks — all from any browser on your local network.
 
-Zero dependencies beyond Python 3 stdlib.
+Dependencies: Flask and Waitress (production WSGI server).
 
 ## Quick start
 
 ```bash
+pip install flask waitress
 python3 server.py
 # → File Explorer running on port 8888
 ```
