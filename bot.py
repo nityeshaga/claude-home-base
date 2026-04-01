@@ -412,17 +412,30 @@ def download_slack_files(event: dict) -> list[Path]:
     return downloaded
 
 
-# Regex for detecting file paths in messages (shared across interactive & proactive)
-FILE_PATH_PATTERN = re.compile(
-    r'(?:^|\s)(/(?:Users|tmp|var)[^\s\'"<>|*?]+\.(?:png|jpg|jpeg|gif|svg|webp|pdf|csv|xlsx|json|txt|html|zip|tar|gz|mp3|mp4|mov))',
-    re.IGNORECASE | re.MULTILINE,
+# File path detection: strip URLs/Slack links first, then find bare paths.
+# This prevents file browser links (http://...8888/browse/Users/luo/...) from
+# triggering uploads — only bare paths like /Users/luo/... or ~/... are matched.
+_URL_PATTERN = re.compile(r'https?://[^\s>]+|<[^>]+>')
+_FILE_PATH_PATTERN = re.compile(
+    r'(~/[^\s`\'"<>|*?,]+\.\w+|/(?:Users|tmp|var|home)/[^\s`\'"<>|*?,]+\.\w+)',
+    re.MULTILINE,
 )
 
 
 def _auto_upload_files(text: str, channel: str, thread_ts: str | None = None) -> None:
     """Scan text for file paths and upload any that exist to Slack."""
-    for fp_match in FILE_PATH_PATTERN.findall(text):
-        fp = Path(fp_match.strip())
+    # Strip URLs and Slack link markup so file browser links don't trigger uploads
+    clean_text = _URL_PATTERN.sub(' ', text)
+    seen: set[str] = set()
+    for match in _FILE_PATH_PATTERN.findall(clean_text):
+        fp_str = match.rstrip('.,;:!?)]`"\'')
+        # Expand tilde to home directory
+        if fp_str.startswith('~'):
+            fp_str = str(Path.home() / fp_str[2:])
+        if fp_str in seen:
+            continue
+        seen.add(fp_str)
+        fp = Path(fp_str)
         if fp.exists() and fp.is_file():
             upload_file_to_slack(str(fp), channel, thread_ts=thread_ts)
             logger.info(f"Auto-uploaded file from response: {fp}")
