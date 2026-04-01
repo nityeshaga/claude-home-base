@@ -18,8 +18,8 @@
     {
       "name": "tactical",
       "source": "./plugins/tactical",
-      "description": "Structured workflows for thinking, creativity, decision-making, and operational work \u2014 brainstorming sessions, inbox management with learn-by-observation calibration.",
-      "version": "1.9.0"
+      "description": "Structured workflows for thinking, creativity, decision-making, and operational work \u2014 chief of staff (email, briefs, action tracking), brainstorming sessions, prompt engineering.",
+      "version": "2.1.1"
     },
     {
       "name": "creative",

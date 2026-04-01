@@ -102,6 +102,20 @@ Write two files:
 
 Create the user's notepad at `~/brief-{user}.md` with the template structure from SKILL.md. Populate it with any action items or pending replies already identified during calibration.
 
+**Step 10: Offer to set up daily automation**
+
+After calibration is complete and the user is happy with their preferences, offer to automate this as a daily routine. **Do not set this up without asking. Always ask first.**
+
+Suggest scheduling with this prompt template (customize the name and times with the user):
+
+```
+Manage {User}'s inbox every day at 8:00 AM and 8:00 PM using the chief-of-staff skill.
+```
+
+That's the base prompt. The user can adjust the times, frequency, or scope from there.
+
+**Critical:** Always confirm with the user before creating any scheduled job. Show them what you're about to create and get explicit approval.
+
 ### Inbox Preference Format
 
 Structured sections with freeform rules inside each — organized enough to scan, flexible enough to capture nuance.
