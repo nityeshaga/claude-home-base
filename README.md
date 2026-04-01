@@ -38,9 +38,9 @@ about-you-and-how-you-came-to-life.md  # Origin story template
 requirements.txt        # Python dependencies
 
 plugins/
-├── tactical/           # Brainstorming, inbox management
+├── tactical/           # Chief of staff, brainstorming, decision-making
 │   └── skills/
-│       ├── inbox-manager/   # Email triage with learning preferences
+│       ├── chief-of-staff/  # Executive assistant — email, briefs, action tracking
 │       └── lets-brainstorm/ # Timed coaching sessions
 └── more-ai/            # Gemini image generation, thinking
     └── skills/
