@@ -14,7 +14,11 @@ import sys
 
 
 def fetch_inbox(max_results=50):
-    """Fetch inbox message IDs and metadata."""
+    """Fetch inbox message IDs and metadata.
+
+    Tries category:primary first (for users with tabbed inbox).
+    Falls back to in:inbox if no results (tabs not enabled).
+    """
     result = subprocess.run(
         ['gws', 'gmail', 'users', 'messages', 'list', '--params',
          json.dumps({"userId": "me", "q": "in:inbox category:primary", "maxResults": max_results})],
@@ -22,6 +26,15 @@ def fetch_inbox(max_results=50):
     )
     data = json.loads(result.stdout)
     ids = [m['id'] for m in data.get('messages', [])]
+
+    if not ids:
+        result = subprocess.run(
+            ['gws', 'gmail', 'users', 'messages', 'list', '--params',
+             json.dumps({"userId": "me", "q": "in:inbox", "maxResults": max_results})],
+            capture_output=True, text=True
+        )
+        data = json.loads(result.stdout)
+        ids = [m['id'] for m in data.get('messages', [])]
 
     emails = []
     for msg_id in ids:

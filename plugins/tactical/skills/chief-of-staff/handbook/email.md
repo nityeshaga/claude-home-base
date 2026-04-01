@@ -50,7 +50,7 @@ gws gmail +watch
 ## Triage Process
 
 1. **Load preferences** from `${CLAUDE_PLUGIN_DATA}/inbox-preferences-{user}.md`
-2. **Run triage**: `gws gmail +triage --max 100 --query 'is:unread category:primary'` for each account
+2. **Run triage**: `gws gmail +triage --max 100 --query 'in:inbox category:primary'` for each account. If this returns zero results, the user likely doesn't have tabbed inbox enabled — fall back to `'in:inbox'`. Include both read and unread messages — the read/unread state is useful signal for understanding how the user processes email.
 3. **Process each unread message**:
    - Check against rules — auto-handle if a rule matches
    - No rule? Use judgment:
