@@ -1,12 +1,12 @@
 ---
 name: chief-of-staff
-description: Executive assistant that manages email, maintains a running brief (living todo list and action tracker), triages data sources, and delivers formatted briefs. Processes email via gws CLI, tracks action items across conversations and Slack, learns preferences over time. Use this skill when managing email, processing inboxes, adding todos, delivering briefs, or running the daily triage routine.
+description: Executive assistant for individuals or entire teams. Manages email, maintains a running brief (living todo list and action tracker), triages data sources, and delivers formatted briefs. Each team member gets fully isolated preferences, briefs, and activity logs — personalized to how they work. Use this skill when managing email, processing inboxes, adding todos, delivering briefs, or running the daily triage routine.
 model: sonnet
 ---
 
 # Chief of Staff
 
-Your executive assistant. Manages email, maintains a running brief, tracks action items across all your work, and delivers formatted briefs on your schedule. Learns how you work and gets better over time.
+Executive assistant for you and your team. Manages email, maintains a running brief, tracks action items across all your work, and delivers formatted briefs on your schedule. Each person gets their own preferences, brief, and activity log — fully isolated, fully personalized. Learns how each person works and gets better over time.
 
 ## Handbook — READ THESE BEFORE OPERATING
 

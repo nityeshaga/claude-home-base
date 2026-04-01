@@ -4,7 +4,7 @@ Process email using the `gws` or `gogcli` CLI. Triage unread messages, archive n
 
 ## Tools
 
-The Google Workspace CLI is already installed and authenticated. You should also have the gws-gmail skill handy (if not install it via `npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail`).
+Check whether the Google Workspace CLI (`gws`) or `gogcli` is installed and authenticated. You should also have the gws-gmail skill handy (if not install it via `npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail`).
 
 ```bash
 # Triage — show unread inbox summary
