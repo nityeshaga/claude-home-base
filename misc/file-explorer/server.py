@@ -675,6 +675,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/markdown/markdown.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/continuelist.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/search/search.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/search/searchcursor.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/search/jump-to-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/dialog/dialog.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/dialog/dialog.min.css">
 <style>
   :root {
     --bg-primary: #1C1917;
@@ -860,13 +869,36 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     background: var(--bg-surface); color: var(--text-primary);
   }
   .btn-cancel:hover { background: var(--bg-elevated); }
-  .edit-textarea {
-    width: 100%; min-height: 70vh; background: var(--bg-sidebar); color: var(--text-primary);
-    border: 1px solid var(--border); border-radius: 6px; padding: 16px;
-    font-family: var(--font-mono); font-size: 14px;
-    line-height: 1.6; resize: vertical; tab-size: 2;
+  #edit-area { display: flex; flex-direction: column; height: calc(100vh - 120px); }
+  #cm-editor { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex: 1; min-height: 0; }
+  #cm-editor .CodeMirror {
+    height: 100%; background: var(--bg-sidebar); color: var(--text-primary);
+    font-family: var(--font-mono); font-size: 14px; line-height: 1.6;
   }
-  .edit-textarea:focus { outline: none; border-color: var(--accent); }
+  #cm-editor .CodeMirror-gutters {
+    background: var(--bg-sidebar); border-right: 1px solid var(--border-subtle);
+    color: var(--text-tertiary);
+  }
+  #cm-editor .CodeMirror-linenumber { color: var(--text-tertiary); font-size: 12px; }
+  #cm-editor .CodeMirror-activeline-background { background: rgba(212, 165, 116, 0.05); }
+  #cm-editor .CodeMirror-activeline-gutter .CodeMirror-linenumber { color: var(--accent); }
+  #cm-editor .CodeMirror-selected { background: rgba(212, 165, 116, 0.15) !important; }
+  #cm-editor .CodeMirror-focused .CodeMirror-selected { background: rgba(212, 165, 116, 0.2) !important; }
+  #cm-editor .CodeMirror-cursor { border-left-color: var(--accent); }
+  #cm-editor .CodeMirror-matchingbracket { color: var(--accent) !important; text-decoration: underline; }
+  #cm-editor .cm-header { color: var(--accent); font-weight: 700; }
+  #cm-editor .cm-header-1 { font-size: 1.3em; }
+  #cm-editor .cm-header-2 { font-size: 1.15em; }
+  #cm-editor .cm-header-3 { font-size: 1.05em; }
+  #cm-editor .cm-strong { color: var(--text-primary); font-weight: 700; }
+  #cm-editor .cm-em { color: var(--text-secondary); font-style: italic; }
+  #cm-editor .cm-link { color: var(--accent); }
+  #cm-editor .cm-url { color: var(--text-tertiary); }
+  #cm-editor .cm-comment { color: var(--text-tertiary); }
+  #cm-editor .cm-quote { color: var(--text-secondary); font-style: italic; }
+  #cm-editor .cm-formatting { color: var(--text-tertiary); }
+  #cm-editor .CodeMirror-dialog { background: var(--bg-surface); border-bottom: 1px solid var(--border); color: var(--text-primary); padding: 4px 8px; }
+  #cm-editor .CodeMirror-dialog input { background: var(--bg-sidebar); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-family: var(--font-mono); }
   .save-status {
     font-size: 13px; color: var(--status-green); display: none;
   }
@@ -952,7 +984,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .task-detail h1 { font-size: 1.2em; }
     .detail-grid { grid-template-columns: 1fr; }
     .log-box { font-size: 11px; padding: 10px; max-height: 300px; }
-    .edit-textarea { font-size: 12px; min-height: 50vh; }
+    #cm-editor .CodeMirror { font-size: 12px; }
+    #edit-area { height: calc(100vh - 100px); }
   }
 
   /* Task detail page — redesigned agent view */
@@ -1247,49 +1280,36 @@ if (mdEl) {
 // Apply syntax highlighting to code files
 document.querySelectorAll('.code-body pre code').forEach(el => hljs.highlightElement(el));
 
-// Edit functionality for CLAUDE.md
+// Edit functionality for CLAUDE.md — CodeMirror 5
 const editBtn = document.getElementById('btn-edit');
 if (editBtn) {
   const filePath = editBtn.dataset.path;
   const rendered = document.getElementById('markdown-rendered');
   const rawEl = document.getElementById('markdown-raw');
   const editArea = document.getElementById('edit-area');
-  const textarea = document.getElementById('edit-textarea');
+  const cmContainer = document.getElementById('cm-editor');
   const saveBtn = document.getElementById('btn-save');
   const cancelBtn = document.getElementById('btn-cancel');
   const status = document.getElementById('save-status');
+  let cmEditor = null;
 
-  editBtn.addEventListener('click', () => {
-    textarea.value = rawEl.textContent;
-    rendered.style.display = 'none';
-    editArea.style.display = 'block';
-    editBtn.style.display = 'none';
-    textarea.focus();
-  });
-
-  cancelBtn.addEventListener('click', () => {
-    editArea.style.display = 'none';
-    rendered.style.display = 'block';
-    editBtn.style.display = 'inline-block';
-  });
-
-  saveBtn.addEventListener('click', async () => {
+  function doSave() {
+    if (!cmEditor) return;
+    const content = cmEditor.getValue();
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving...';
-    try {
-      const resp = await fetch('/save', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({path: filePath, content: textarea.value})
-      });
-      const result = await resp.json();
+    fetch('/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: filePath, content: content})
+    }).then(r => r.json()).then(result => {
       if (result.ok) {
         status.textContent = 'Saved!';
         status.style.display = 'inline';
-        // Re-render the markdown
-        rendered.innerHTML = marked.parse(textarea.value);
+        status.style.color = 'var(--status-green)';
+        rendered.innerHTML = marked.parse(content);
         rendered.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
-        rawEl.textContent = textarea.value;
+        rawEl.textContent = content;
         setTimeout(() => {
           editArea.style.display = 'none';
           rendered.style.display = 'block';
@@ -1301,30 +1321,51 @@ if (editBtn) {
         status.style.color = '#f85149';
         status.style.display = 'inline';
       }
-    } catch(e) {
+    }).catch(e => {
       status.textContent = 'Error: ' + e.message;
       status.style.color = '#f85149';
       status.style.display = 'inline';
+    }).finally(() => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    });
+  }
+
+  editBtn.addEventListener('click', () => {
+    rendered.style.display = 'none';
+    editArea.style.display = 'block';
+    editBtn.style.display = 'none';
+
+    if (!cmEditor) {
+      cmEditor = CodeMirror(cmContainer, {
+        value: rawEl.textContent,
+        mode: 'markdown',
+        lineNumbers: true,
+        lineWrapping: true,
+        styleActiveLine: true,
+        matchBrackets: true,
+        indentUnit: 2,
+        tabSize: 2,
+        indentWithTabs: false,
+        extraKeys: {
+          'Cmd-S': function() { doSave(); },
+          'Ctrl-S': function() { doSave(); },
+          'Enter': 'newlineAndIndentContinueMarkdownList',
+        },
+      });
+    } else {
+      cmEditor.setValue(rawEl.textContent);
     }
-    saveBtn.disabled = false;
-    saveBtn.textContent = 'Save';
+    setTimeout(() => { cmEditor.refresh(); cmEditor.focus(); }, 10);
   });
 
-  // Tab key inserts spaces instead of changing focus
-  textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
-      textarea.selectionStart = textarea.selectionEnd = start + 2;
-    }
-    // Cmd+S / Ctrl+S to save
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      e.preventDefault();
-      saveBtn.click();
-    }
+  cancelBtn.addEventListener('click', () => {
+    editArea.style.display = 'none';
+    rendered.style.display = 'block';
+    editBtn.style.display = 'inline-block';
   });
+
+  saveBtn.addEventListener('click', doSave);
 }
 </script>
 </body>
@@ -1843,12 +1884,12 @@ def _serve_file(p):
             is_editable = p.resolve() in EDITABLE_FILES
             edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html_mod.escape(str(p))}">Edit</button>' if is_editable else ''
             edit_area = '''<div id="edit-area" style="display:none;">
-                <textarea id="edit-textarea" class="edit-textarea"></textarea>
-                <div class="edit-bar" style="margin-top:12px;">
-                    <button id="btn-save" class="btn-save">Save</button>
-                    <button id="btn-cancel" class="btn-cancel">Cancel</button>
+                <div class="edit-bar" style="margin-bottom:12px; justify-content:flex-end;">
                     <span id="save-status" class="save-status"></span>
+                    <button id="btn-cancel" class="btn-cancel">Cancel</button>
+                    <button id="btn-save" class="btn-save">Save</button>
                 </div>
+                <div id="cm-editor"></div>
             </div>''' if is_editable else ''
             content = f'''<div class="file-content">
                 <div class="edit-bar">
