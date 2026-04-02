@@ -412,22 +412,20 @@ def download_slack_files(event: dict) -> list[Path]:
     return downloaded
 
 
-# File path detection: strip URLs/Slack links first, then find bare paths.
-# This prevents file browser links (http://...8888/browse/Users/luo/...) from
-# triggering uploads — only bare paths like /Users/luo/... or ~/... are matched.
-_URL_PATTERN = re.compile(r'https?://[^\s>]+|<[^>]+>')
-_FILE_PATH_PATTERN = re.compile(
-    r'(~/[^\s`\'"<>|*?,]+\.\w+|/(?:Users|tmp|var|home)/[^\s`\'"<>|*?,]+\.\w+)',
+# File upload trigger: only paths prefixed with "attach:" are uploaded.
+# Matches "attach:/path/to/file" or "attach:~/path/to/file" (with optional
+# whitespace after the colon). This prevents accidental uploads when file
+# paths are mentioned in normal conversation.
+_ATTACH_PATTERN = re.compile(
+    r'attach:\s*(~/[^\s`\'"<>|*?,]+\.\w+|/(?:Users|tmp|var|home)/[^\s`\'"<>|*?,]+\.\w+)',
     re.MULTILINE,
 )
 
 
 def _auto_upload_files(text: str, channel: str, thread_ts: str | None = None) -> None:
-    """Scan text for file paths and upload any that exist to Slack."""
-    # Strip URLs and Slack link markup so file browser links don't trigger uploads
-    clean_text = _URL_PATTERN.sub(' ', text)
+    """Scan text for attach:/path markers and upload matching files to Slack."""
     seen: set[str] = set()
-    for match in _FILE_PATH_PATTERN.findall(clean_text):
+    for match in _ATTACH_PATTERN.findall(text):
         fp_str = match.rstrip('.,;:!?)]`"\'')
         # Expand tilde to home directory
         if fp_str.startswith('~'):
