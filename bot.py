@@ -721,11 +721,12 @@ def process_message_async(event: dict) -> None:
     if not has_existing_session and not has_live_process and is_thread_reply:
         thread_context = _fetch_thread_context(channel, thread_ts, msg_ts)
 
-    if is_channel and not has_existing_session and not has_live_process:
+    is_public_channel = event.get("channel_type") == "channel"
+    if is_public_channel and not has_existing_session and not has_live_process:
         prefix = (
             f"You received this message in a public channel from {sender_name} (<@{user_id}>). "
-            "Only respond if it's relevant to you or your work. "
-            "If it's not relevant, respond with exactly: SKIP\n\n"
+            "Only respond if you are directly addressed by name, asked a question, or given an explicit task. "
+            "If the message is general discussion, status updates, or chatter — even if it relates to your work — respond with exactly: SKIP\n\n"
         )
         if thread_context:
             text = prefix + f"Here is the conversation so far in this thread:\n\n{thread_context}\n\n[{sender_name}] now says:\n{text}"
@@ -844,9 +845,13 @@ def handle_message(event, say):
 
     user_id = event.get("user", "")
     if not is_authorized(user_id):
+        # In DMs, block unauthorized users. In channels, let them through —
+        # Claude will talk to anyone in public but respects info boundaries.
+        if event.get("channel_type") in ("im", "mpim"):
+            log_unauthorized(event)
+            say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
+            return
         log_unauthorized(event)
-        say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
-        return
 
     # Process async — return immediately so Slack gets its 200
     threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
@@ -857,9 +862,12 @@ def handle_mention(event, say):
     """Handle @bot mentions in channels."""
     user_id = event.get("user", "")
     if not is_authorized(user_id):
+        # In DMs, block. In channels, let through (Claude respects info boundaries).
+        if event.get("channel_type") in ("im", "mpim"):
+            log_unauthorized(event)
+            say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
+            return
         log_unauthorized(event)
-        say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
-        return
 
     threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
 
