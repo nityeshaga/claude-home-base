@@ -114,6 +114,23 @@ slack_client = WebClient(token=SLACK_BOT_TOKEN)
 # Cache for Slack user display names (user_id → display name)
 _user_name_cache: dict[str, str] = {}
 
+# Cache for Slack channel names (channel_id → channel name)
+_channel_name_cache: dict[str, str] = {}
+
+
+def _get_channel_name(channel_id: str) -> str:
+    """Look up a Slack channel's name, with caching."""
+    if channel_id in _channel_name_cache:
+        return _channel_name_cache[channel_id]
+    try:
+        info = slack_client.conversations_info(channel=channel_id)
+        name = info["channel"].get("name", channel_id)
+        _channel_name_cache[channel_id] = name
+    except Exception:
+        name = channel_id
+        _channel_name_cache[channel_id] = name
+    return name
+
 
 def _get_user_name(user_id: str) -> str:
     """Look up a Slack user's display name, with caching."""
@@ -169,10 +186,10 @@ def _fetch_thread_context(channel: str, thread_ts: str, current_msg_ts: str) -> 
             continue
 
         if msg_user == BOT_USER_ID:
-            lines.append(f"[You ({BOT_DISPLAY_NAME})] said:\n{msg_text}")
+            lines.append(f"[You ({BOT_DISPLAY_NAME})]:\n{msg_text}")
         else:
             name = _get_user_name(msg_user)
-            lines.append(f"[{name}] said:\n{msg_text}")
+            lines.append(f"[{name}]({msg_user}):\n{msg_text}")
 
     if not lines:
         return None
@@ -702,8 +719,9 @@ def process_message_async(event: dict) -> None:
         return
 
     if attached_files:
-        file_instructions = [f"The user attached a file. Read it at: {fp}" for fp in attached_files]
-        text = "\n".join(file_instructions) + "\n\n" + (text or "Describe what you see in the attached file(s).")
+        paths = ", ".join(str(fp) for fp in attached_files)
+        label = "Files attached" if len(attached_files) > 1 else "File attached"
+        text = f"{label}: {paths}" + (f"\n\n{text}" if text else "")
 
     # Prepend sender attribution so Claude knows who sent this message
     sender_name = _get_user_name(user_id)
@@ -725,20 +743,22 @@ def process_message_async(event: dict) -> None:
 
     is_public_channel = event.get("channel_type") == "channel"
     if is_public_channel and not has_existing_session and not has_live_process:
+        channel_name = _get_channel_name(channel)
         prefix = (
-            f"You received this message in a public channel from {sender_name} (<@{user_id}>). "
-            "Only respond if you are directly addressed by name, asked a question, or given an explicit task. "
-            "If the message is general discussion, status updates, or chatter — even if it relates to your work — respond with exactly: SKIP\n\n"
+            f"A new message in public channel #{channel_name}. "
+            "Only respond if you're directly addressed by name or tagged "
+            "or if you're already part of the conversation thread. "
+            "Respond with exactly \"SKIP\" in all other cases.\n\n"
         )
         if thread_context:
-            text = prefix + f"Here is the conversation so far in this thread:\n\n{thread_context}\n\n[{sender_name}] now says:\n{text}"
+            text = prefix + f"{thread_context}\n\n[{sender_name}]({user_id}):\n{text}"
         else:
-            text = prefix + text
+            text = prefix + f"[{sender_name}]({user_id}):\n{text}"
     else:
         if thread_context:
-            text = f"Here is the conversation so far in this thread:\n\n{thread_context}\n\n[{sender_name}] now says:\n{text}"
+            text = f"{thread_context}\n\n[{sender_name}]({user_id}):\n{text}"
         else:
-            text = f"[{sender_name}] says:\n{text}"
+            text = f"[{sender_name}]({user_id}):\n{text}"
 
     # Add eyes reaction as thinking indicator
     try:
