@@ -317,6 +317,8 @@ def _reader_loop(session: LiveSession) -> None:
     except Exception as e:
         logger.error(f"Reader loop error for thread {session.thread_ts}: {e}")
     finally:
+        # Process ended — unblock any thread waiting on a response
+        session._turn_done.set()
         logger.info(f"Reader loop ended for thread {session.thread_ts} (pid={session.proc.pid})")
         with _live_sessions_lock:
             _live_sessions.pop(session.thread_ts, None)
@@ -790,6 +792,17 @@ def process_message_async(event: dict) -> None:
                 slack_client.chat_postMessage(
                     channel=channel, thread_ts=thread_ts,
                     text=f"Sorry, that timed out after {minutes} minutes. Try a simpler question?",
+                )
+                return
+
+            # Check if the process died without producing a response
+            if not all_texts and not skip_detected and session.proc.poll() is not None:
+                try: slack_client.reactions_remove(channel=channel, name="eyes", timestamp=msg_ts)
+                except Exception: pass
+                logger.error(f"Claude process died without responding in thread {thread_ts}")
+                slack_client.chat_postMessage(
+                    channel=channel, thread_ts=thread_ts,
+                    text="Sorry, I lost my train of thought. Could you try sending that again?",
                 )
                 return
 

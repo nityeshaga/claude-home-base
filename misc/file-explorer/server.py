@@ -19,6 +19,8 @@ import urllib.parse
 import plistlib
 import subprocess
 import re
+import difflib
+from collections import OrderedDict
 from flask import Flask, Response, redirect, request, jsonify
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -76,6 +78,7 @@ SIDEBAR_ICONS = {
     "Memory": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><circle cx="4" cy="5" r="1.2"/><circle cx="16" cy="4.5" r="1.2"/><circle cx="15" cy="15.5" r="1.2"/><circle cx="5" cy="16" r="1.2"/><path d="M7.8 8.2L5 5.8"/><path d="M12.2 8.2l3-3"/><path d="M12 11.8l2.2 3"/><path d="M8 11.8l-2.2 3.4"/></svg>',
     "CLAUDE.md": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5V17c0 .3-.2.5-.5.5H5c-.3 0-.5-.2-.5-.5V3c0-.3.2-.5.5-.5z"/><path d="M12 2.5v3.5h3.5"/><path d="M7.5 9h5"/><path d="M7.5 11.5h5"/><path d="M7.5 14h3"/></svg>',
     "Scheduled Tasks": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5v5l3.5 2"/><circle cx="10" cy="10" r=".7" fill="currentColor"/><path d="M10 3v.8"/><path d="M17 10h-.8"/><path d="M10 17v-.8"/><path d="M3 10h.8"/></svg>',
+    "Conversations": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5c-1 0-1.5.5-1.5 1.5v7c0 1 .5 1.5 1.5 1.5h1v2.5l3-2.5h5c1 0 1.5-.5 1.5-1.5V6c0-1-.5-1.5-1.5-1.5z"/><path d="M7 3h9c1 0 1.5.5 1.5 1.5v6c0 1-.5 1.5-1.5 1.5h-.5"/><path d="M6 8h5.5"/><path d="M6 10.5h3.5"/></svg>',
 }
 
 FILE_TYPE_SVGS = {
@@ -1238,6 +1241,306 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .hljs-number, .hljs-literal { color: #D08770 !important; }
   .hljs-title, .hljs-section { color: var(--accent-hover) !important; }
   .hljs-attr, .hljs-attribute { color: #EBCB8B !important; }
+
+  /* ============================================================
+     CONVERSATIONS TAB
+     ============================================================ */
+
+  /* Index page */
+  .conv-index { max-width: 760px; margin: 0 auto; }
+  .conv-index-header { text-align: center; margin-bottom: 32px; }
+  .conv-index-header h1 {
+    font-family: var(--font-prose); font-size: 32px; font-weight: 700;
+    color: var(--text-primary); margin: 0 0 8px; letter-spacing: -0.01em;
+  }
+  .conv-index-header .subtitle {
+    font-family: var(--font-mono); font-size: 14px; color: var(--text-tertiary); margin: 0;
+  }
+
+  /* Date group tabs — horizontal row, sticky */
+  .conv-group-tabs {
+    display: flex; gap: 0;
+    border-bottom: 1px solid rgba(212, 165, 116, 0.35);
+    margin-bottom: 0;
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg-primary);
+  }
+  .conv-group-tabs .group-tab {
+    font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+    color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 12px 24px; cursor: pointer; position: relative;
+    border-bottom: 2px solid transparent; transition: color 0.15s;
+    white-space: nowrap; margin-bottom: -1px;
+    text-decoration: none;
+  }
+  .conv-group-tabs .group-tab:hover { color: var(--text-secondary); }
+  .conv-group-tabs .group-tab.active {
+    color: var(--accent); border-bottom-color: var(--accent);
+  }
+
+  /* Section label inside each group */
+  .conv-section-label {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 16px 20px 8px;
+  }
+
+  .conv-group-section {
+    display: block;
+    scroll-margin-top: 48px;
+  }
+  .conv-group-section + .conv-group-section {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  /* Fallback stacked groups */
+  .conv-date-group { margin-bottom: 0; }
+  .conv-date-group .group-label {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 12px 0 8px; margin-bottom: 0; border-bottom: 1px solid var(--border);
+  }
+
+  .conv-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px 20px; border-bottom: 1px solid rgba(212, 165, 116, 0.12);
+    text-decoration: none; color: inherit;
+    cursor: pointer; transition: background 0.12s;
+  }
+  .conv-row:last-child { border-bottom: none; }
+  .conv-row:hover { background: rgba(212, 165, 116, 0.10); }
+
+  .conv-row .conv-marker {
+    flex-shrink: 0; width: 16px; height: 16px; color: var(--accent); opacity: 0.5;
+  }
+  .conv-row:hover .conv-marker { opacity: 1; }
+
+  .conv-row .conv-time {
+    font-family: var(--font-mono); font-size: 14px; font-weight: 600;
+    color: var(--text-primary); min-width: 44px; flex-shrink: 0;
+  }
+  .conv-row .conv-info { flex: 1; min-width: 0; overflow: hidden; }
+  .conv-row .conv-preview {
+    font-family: var(--font-prose); font-size: 15px; color: var(--text-primary);
+    line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: block;
+  }
+  .conv-row .conv-size {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
+    min-width: 56px; text-align: right; flex-shrink: 0;
+  }
+
+  /* Detail page */
+  .conv-detail { max-width: 860px; }
+  .conv-detail-back {
+    font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary);
+    text-decoration: none; display: inline-block; margin-bottom: 16px;
+  }
+  .conv-detail-back:hover { color: var(--accent); }
+  .conv-detail-header { margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px; }
+  .conv-detail-header h1 { font-family: var(--font-prose); font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+  .conv-detail-header .conv-header-meta {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }
+
+  /* Message blocks */
+  .conv-message { margin-bottom: 4px; padding: 0; }
+  .conv-message.role-user { }
+  .conv-message.role-assistant { }
+
+  .conv-message.role-user .conv-text {
+    background: rgba(212, 165, 116, 0.06);
+    border-left: 3px solid var(--accent);
+    padding: 14px 18px;
+    border-radius: 0 6px 6px 0;
+    margin: 12px 0;
+  }
+  .conv-message.role-user .conv-text .conv-markdown {
+    font-family: var(--font-prose); font-size: 15px; line-height: 1.7;
+    color: var(--text-primary);
+  }
+
+  .conv-message.role-assistant .conv-text {
+    padding: 10px 18px;
+    margin: 4px 0;
+  }
+  .conv-message.role-assistant .conv-text .conv-markdown {
+    font-family: var(--font-prose); font-size: 15px; line-height: 1.7;
+    color: var(--text-primary);
+  }
+
+  /* Markdown inside conversations */
+  .conv-markdown p { margin: 0 0 10px; }
+  .conv-markdown p:last-child { margin-bottom: 0; }
+  .conv-markdown code {
+    font-family: var(--font-mono); font-size: 13px;
+    background: var(--bg-surface); padding: 2px 5px; border-radius: 3px;
+  }
+  .conv-markdown pre { background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 14px; overflow-x: auto; margin: 10px 0; }
+  .conv-markdown pre code { background: none; padding: 0; font-size: 13px; line-height: 1.5; }
+  .conv-markdown h1, .conv-markdown h2, .conv-markdown h3 { font-family: var(--font-prose); color: var(--text-primary); margin: 16px 0 8px; }
+  .conv-markdown h1 { font-size: 22px; }
+  .conv-markdown h2 { font-size: 18px; }
+  .conv-markdown h3 { font-size: 16px; }
+  .conv-markdown ul, .conv-markdown ol { padding-left: 24px; margin: 8px 0; }
+  .conv-markdown li { margin: 4px 0; }
+  .conv-markdown blockquote { border-left: 3px solid var(--border); padding-left: 14px; color: var(--text-secondary); font-style: italic; margin: 10px 0; }
+  .conv-markdown strong { font-weight: 700; }
+  .conv-markdown a { color: var(--accent); text-decoration: none; }
+  .conv-markdown a:hover { color: var(--accent-hover); text-decoration: underline; }
+  .conv-markdown table { border-collapse: collapse; margin: 10px 0; width: 100%; }
+  .conv-markdown th, .conv-markdown td { border: 1px solid var(--border-subtle); padding: 6px 10px; font-size: 14px; text-align: left; }
+  .conv-markdown th { background: var(--bg-surface); font-weight: 500; }
+
+  /* Thinking blocks */
+  .conv-thinking {
+    margin: 6px 0; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .conv-thinking summary {
+    cursor: pointer; color: var(--text-tertiary); padding: 6px 10px;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+    border-radius: 6px; transition: background 0.15s;
+  }
+  .conv-thinking summary:hover { background: var(--bg-surface); color: var(--text-secondary); }
+  .conv-thinking .thinking-icon { display: flex; align-items: center; opacity: 0.6; }
+  .conv-thinking .thinking-body {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle);
+    border-radius: 0 0 6px 6px; padding: 12px 14px; margin-top: 2px;
+  }
+  .conv-thinking .thinking-body pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  /* Tool use blocks */
+  .conv-tool-use {
+    margin: 6px 0; border-radius: 6px; font-family: var(--font-mono); font-size: 13px;
+  }
+  .conv-tool-use summary {
+    cursor: pointer; color: var(--text-secondary); padding: 8px 12px;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+    background: var(--bg-surface); border: 1px solid var(--border-subtle);
+    border-radius: 6px; transition: background 0.15s;
+  }
+  .conv-tool-use[open] summary { border-radius: 6px 6px 0 0; }
+  .conv-tool-use summary:hover { background: var(--bg-elevated); }
+  .conv-tool-use .tool-icon { display: flex; align-items: center; color: var(--accent); }
+  .conv-tool-use .tool-name { font-weight: 500; color: var(--accent); }
+  .conv-tool-use .tool-summary { color: var(--text-tertiary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-tool-use .tool-body {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-top: none;
+    border-radius: 0 0 6px 6px; padding: 12px 14px; overflow-x: auto;
+  }
+  .conv-tool-use .tool-file { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; word-break: break-all; }
+  .conv-tool-use .tool-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; font-style: italic; }
+  .conv-tool-use .tool-note { font-size: 12px; color: var(--text-tertiary); }
+  .conv-tool-use .code-block pre {
+    margin: 0; background: var(--bg-primary); border: 1px solid var(--border-subtle);
+    border-radius: 4px; padding: 10px 12px; overflow-x: auto;
+    font-size: 12px; line-height: 1.5; color: var(--text-primary);
+  }
+
+  /* Diff rendering */
+  .diff-block pre {
+    margin: 0; background: var(--bg-primary); border: 1px solid var(--border-subtle);
+    border-radius: 4px; padding: 10px 12px; overflow-x: auto;
+    font-size: 12px; line-height: 1.7;
+  }
+  .diff-add { color: #A3BE8C; display: block; background: rgba(163, 190, 140, 0.08); margin: 0 -12px; padding: 0 12px; }
+  .diff-del { color: #BF616A; display: block; background: rgba(191, 97, 106, 0.08); margin: 0 -12px; padding: 0 12px; text-decoration: line-through; opacity: 0.7; }
+  .diff-hunk { color: var(--text-tertiary); display: block; font-style: italic; }
+  .diff-ctx { color: var(--text-secondary); display: block; }
+  .diff-flag { color: var(--accent); font-weight: normal; font-size: 11px; }
+
+  /* Tool result blocks */
+  .conv-tool-result {
+    margin: 2px 0 6px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .conv-tool-result summary {
+    cursor: pointer; color: var(--text-tertiary); padding: 6px 12px;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+    border-radius: 6px; transition: background 0.15s;
+  }
+  .conv-tool-result summary:hover { background: var(--bg-surface); }
+  .conv-tool-result .result-icon { display: flex; align-items: center; color: var(--status-green); }
+  .conv-tool-result.tool-error .result-icon { color: #BF616A; }
+  .conv-tool-result .result-preview { color: var(--text-tertiary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 500px; }
+  .conv-tool-result .result-body {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle);
+    border-radius: 0 0 6px 6px; padding: 12px 14px; margin-top: 2px;
+  }
+  .conv-tool-result .result-body pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+  }
+
+  /* Role label */
+  .conv-role-label {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 16px 18px 4px; color: var(--text-tertiary);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .conv-role-label .conv-ts { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.7; }
+
+  /* Load more button */
+  .conv-load-more {
+    font-family: var(--font-mono); font-size: 13px; color: var(--accent);
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 20px; cursor: pointer;
+    display: block; margin: 24px auto; transition: background 0.15s;
+  }
+  .conv-load-more:hover { background: var(--bg-elevated); }
+
+  /* Pagination — amber dots */
+  .conv-pagination {
+    display: flex; justify-content: center; gap: 10px; align-items: center;
+    margin-top: 32px; padding-top: 0;
+  }
+  .conv-pagination > * {
+    display: inline-block; width: 10px; height: 10px; min-width: 10px; min-height: 10px;
+    border-radius: 50%; font-size: 0; line-height: 0; color: transparent;
+    text-decoration: none; transition: all 0.15s; vertical-align: middle;
+    background: rgba(212, 165, 116, 0.35);
+  }
+  .conv-pagination a:hover { background: var(--accent); transform: scale(1.3); cursor: pointer; }
+  .conv-pagination .current { background: var(--accent); width: 11px; height: 11px; min-width: 11px; min-height: 11px; }
+
+  /* Skill/meta messages — collapsed by default */
+  .conv-meta-msg { margin: 6px 0; }
+  .conv-skill-loaded {
+    margin: 6px 18px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .conv-skill-loaded summary {
+    cursor: pointer; color: var(--text-tertiary); padding: 8px 12px;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+    background: var(--bg-surface); border: 1px solid var(--border-subtle);
+    border-radius: 6px; transition: background 0.15s;
+  }
+  .conv-skill-loaded[open] summary { border-radius: 6px 6px 0 0; }
+  .conv-skill-loaded summary:hover { background: var(--bg-elevated); color: var(--text-secondary); }
+  .conv-skill-loaded .skill-icon { display: flex; align-items: center; color: var(--accent); }
+  .conv-skill-loaded .skill-size { color: var(--text-tertiary); font-size: 11px; opacity: 0.7; }
+  .conv-skill-loaded .skill-body {
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-top: none;
+    border-radius: 0 0 6px 6px; padding: 12px 14px; max-height: 400px; overflow-y: auto;
+  }
+
+  /* Top bar with back + Slack button */
+  .conv-detail-topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .conv-slack-btn {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);
+    text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-surface); transition: all 0.15s;
+  }
+  .conv-slack-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--bg-elevated); }
+  .conv-slack-btn svg { flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -1395,11 +1698,22 @@ def make_sidebar(current_path=''):
             active = ' active'
         links.append(f'<a href="/browse{path}" class="{active}"><span class="icon">{icon_svg}</span>{name}</a>')
 
+    # CLAUDE.md link
+    claude_md_path = str(BASE_DIR / 'CLAUDE.md')
+    claude_active = ' active' if current_path == claude_md_path else ''
+    claude_icon = SIDEBAR_ICONS['CLAUDE.md']
+    links.append(f'<a href="/browse{claude_md_path}" class="{claude_active}"><span class="icon">{claude_icon}</span>CLAUDE.md</a>')
+
     # Scheduled Tasks link (only if task prefixes are configured)
     if TASK_PREFIXES:
         tasks_active = ' active' if current_path == 'Scheduled Tasks' or current_path.startswith('Task:') else ''
         tasks_icon = SIDEBAR_ICONS['Scheduled Tasks']
         links.append(f'<a href="/tasks" class="{tasks_active}"><span class="icon">{tasks_icon}</span>Scheduled Tasks</a>')
+
+    # Conversations link
+    conv_active = ' active' if current_path == 'Conversations' or current_path.startswith('Conversation:') else ''
+    conv_icon = SIDEBAR_ICONS['Conversations']
+    links.append(f'<a href="/conversations" class="{conv_active}"><span class="icon">{conv_icon}</span>Conversations</a>')
     return "\n".join(links)
 
 
@@ -1463,6 +1777,355 @@ def _home_hero():
         <div style="font-family:var(--font-prose); font-size:20px; color:var(--accent); margin-bottom:4px;">{greeting}.</div>
         <div style="font-family:var(--font-prose); font-size:14px; color:var(--text-secondary);">Welcome to {DISPLAY_NAME}\'s workspace.</div>
     </div>'''
+
+
+# ============================================================
+# CONVERSATION LOG HELPERS
+# ============================================================
+
+# Conversations directory: first session dir found under .claude/projects
+CONVERSATIONS_DIR = None
+for _d in _get_session_dirs():
+    CONVERSATIONS_DIR = _d
+    break
+if CONVERSATIONS_DIR is None:
+    CONVERSATIONS_DIR = Path.home() / '.claude' / 'projects'
+
+
+def list_conversation_sessions():
+    """List all JSONL conversation sessions with metadata."""
+    sessions = []
+    if not CONVERSATIONS_DIR.exists():
+        return sessions
+
+    for f in CONVERSATIONS_DIR.glob('*.jsonl'):
+        try:
+            stat = f.stat()
+            size = stat.st_size
+            mtime = stat.st_mtime
+
+            # Efficient scan: read line by line, extract metadata without loading entire file
+            first_user_msg = ''
+            first_timestamp = None
+            last_timestamp = None
+            msg_count = 0
+            user_count = 0
+            assistant_count = 0
+            entrypoint = ''
+
+            with open(f) as fh:
+                for line in fh:
+                    try:
+                        obj = json.loads(line)
+                        t = obj.get('type')
+                        ts = obj.get('timestamp')
+
+                        if t == 'user':
+                            user_count += 1
+                            msg_count += 1
+                            if ts and not first_timestamp:
+                                first_timestamp = ts
+                            if ts:
+                                last_timestamp = ts
+                            if not entrypoint:
+                                entrypoint = obj.get('entrypoint', '')
+                            if not first_user_msg:
+                                msg = obj.get('message', {})
+                                content = msg.get('content', '')
+                                if isinstance(content, str):
+                                    first_user_msg = content[:300]
+                                elif isinstance(content, list):
+                                    for c in content:
+                                        if isinstance(c, dict) and c.get('type') == 'text':
+                                            first_user_msg = c.get('text', '')[:300]
+                                            break
+
+                        elif t == 'assistant':
+                            assistant_count += 1
+                            msg_count += 1
+                            if ts:
+                                last_timestamp = ts
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+
+            # Clean up the preview
+            preview = first_user_msg
+            # Strip common forwarding prefixes
+            slack_prefix = re.match(
+                r'You received this message .+? respond with exactly: SKIP\s*',
+                preview, re.DOTALL
+            )
+            if slack_prefix:
+                preview = preview[slack_prefix.end():]
+            if preview and len(preview) > 300:
+                preview = preview[:300]
+            preview = preview.strip().replace('\n', ' ')[:100]
+
+            sessions.append({
+                'id': f.stem,
+                'path': str(f),
+                'size': size,
+                'mtime': mtime,
+                'first_timestamp': first_timestamp,
+                'last_timestamp': last_timestamp,
+                'msg_count': msg_count,
+                'user_count': user_count,
+                'assistant_count': assistant_count,
+                'preview': preview,
+                'entrypoint': entrypoint,
+            })
+        except Exception:
+            continue
+
+    sessions.sort(key=lambda s: s['mtime'], reverse=True)
+    return sessions
+
+
+def parse_conversation(session_id):
+    """Parse a JSONL conversation file into structured messages for rendering."""
+    f = CONVERSATIONS_DIR / f'{session_id}.jsonl'
+    if not f.exists():
+        return None
+
+    messages = []
+    with open(f) as fh:
+        for line in fh:
+            try:
+                obj = json.loads(line)
+                t = obj.get('type')
+
+                if t == 'user':
+                    msg = obj.get('message', {})
+                    content = msg.get('content', '')
+                    timestamp = obj.get('timestamp', '')
+                    is_meta = obj.get('isMeta', False)
+                    source_tool_id = obj.get('sourceToolUseID', '')
+
+                    # Content can be a string (user text) or list (tool results)
+                    blocks = []
+                    if isinstance(content, str):
+                        blocks.append({'type': 'text', 'text': content})
+                    elif isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict):
+                                blocks.append(c)
+
+                    messages.append({
+                        'role': 'user',
+                        'timestamp': timestamp,
+                        'blocks': blocks,
+                        'is_meta': is_meta,
+                        'source_tool_id': source_tool_id,
+                    })
+
+                elif t == 'assistant':
+                    msg = obj.get('message', {})
+                    content = msg.get('content', [])
+                    timestamp = obj.get('timestamp', '')
+
+                    blocks = []
+                    if isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict):
+                                blocks.append(c)
+                    elif isinstance(content, str):
+                        blocks.append({'type': 'text', 'text': content})
+
+                    messages.append({
+                        'role': 'assistant',
+                        'timestamp': timestamp,
+                        'blocks': blocks,
+                    })
+
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    return messages
+
+
+def _render_conversation_block(block, block_idx):
+    """Render a single content block (text, thinking, tool_use, tool_result) as HTML."""
+    btype = block.get('type', '')
+
+    if btype == 'text':
+        text = block.get('text', '')
+        escaped = html_mod.escape(text)
+        return f'<div class="conv-text"><div class="conv-markdown" data-raw="{html_mod.escape(text, quote=True)}">{escaped}</div></div>'
+
+    elif btype == 'thinking':
+        thinking = block.get('thinking', '')
+        escaped = html_mod.escape(thinking)
+        return f'''<details class="conv-thinking">
+            <summary><span class="thinking-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="7" cy="7" r="5.5"/><path d="M5.5 5.5c0-1.1.7-1.8 1.5-1.8s1.5.7 1.5 1.8c0 .8-.6 1.2-1.5 1.5v.8"/><circle cx="7" cy="9.5" r=".4" fill="currentColor"/></svg>
+            </span>Thinking</summary>
+            <div class="thinking-body"><pre>{escaped}</pre></div>
+        </details>'''
+
+    elif btype == 'tool_use':
+        name = block.get('name', 'Unknown tool')
+        inp = block.get('input', {})
+        tool_id = block.get('id', '')
+
+        # Build a human-readable summary line
+        summary = _tool_use_summary(name, inp)
+
+        # Build the detail body
+        detail_html = _render_tool_input(name, inp)
+
+        return f'''<details class="conv-tool-use" data-tool-id="{html_mod.escape(tool_id)}">
+            <summary><span class="tool-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 2.5l3 3-7.5 7.5H1v-3z"/><path d="M7 4l3 3"/></svg>
+            </span><span class="tool-name">{html_mod.escape(name)}</span> <span class="tool-summary">{html_mod.escape(summary)}</span></summary>
+            <div class="tool-body">{detail_html}</div>
+        </details>'''
+
+    elif btype == 'tool_result':
+        tool_use_id = block.get('tool_use_id', '')
+        content = block.get('content', '')
+        is_error = block.get('is_error', False)
+
+        result_text = ''
+        if isinstance(content, str):
+            result_text = content
+        elif isinstance(content, list):
+            parts = []
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    parts.append(c.get('text', ''))
+            result_text = '\n'.join(parts)
+
+        if len(result_text) > 5000:
+            result_text = result_text[:5000] + f'\n\n... ({len(result_text) - 5000} more characters truncated)'
+
+        escaped = html_mod.escape(result_text)
+        error_class = ' tool-error' if is_error else ''
+
+        return f'''<details class="conv-tool-result{error_class}" data-tool-id="{html_mod.escape(tool_use_id)}">
+            <summary><span class="result-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2.5 7.5l3 3 6-7"/></svg>
+            </span>Result{' (error)' if is_error else ''} <span class="result-preview">{html_mod.escape(result_text[:80].replace(chr(10), " "))}</span></summary>
+            <div class="result-body"><pre>{escaped}</pre></div>
+        </details>'''
+
+    return ''
+
+
+def _tool_use_summary(name, inp):
+    """Return a short human-readable summary of a tool call."""
+    if name == 'Read':
+        return inp.get('file_path', '')
+    elif name == 'Write':
+        return inp.get('file_path', '')
+    elif name == 'Edit':
+        fp = inp.get('file_path', '')
+        return fp
+    elif name == 'Bash':
+        desc = inp.get('description', '')
+        cmd = inp.get('command', '')
+        return desc if desc else (cmd[:80] if cmd else '')
+    elif name == 'Grep':
+        pattern = inp.get('pattern', '')
+        path = inp.get('path', '')
+        return f'/{pattern}/ in {path}' if path else f'/{pattern}/'
+    elif name == 'Glob':
+        return inp.get('pattern', '')
+    elif name == 'Agent':
+        return inp.get('description', inp.get('prompt', '')[:80])
+    elif name == 'Skill':
+        return inp.get('skill', '')
+    elif name == 'TodoWrite':
+        return ''
+    else:
+        return ''
+
+
+def _render_tool_input(name, inp):
+    """Render tool input as formatted HTML, with special treatment for Edit diffs."""
+    if name == 'Edit':
+        fp = html_mod.escape(inp.get('file_path', ''))
+        old_s = inp.get('old_string', '')
+        new_s = inp.get('new_string', '')
+        replace_all = inp.get('replace_all', False)
+
+        # Render as a diff
+        old_lines = old_s.splitlines(keepends=True)
+        new_lines = new_s.splitlines(keepends=True)
+
+        diff = difflib.unified_diff(old_lines, new_lines, lineterm='')
+        diff_lines = list(diff)
+
+        if diff_lines:
+            diff_html = []
+            for line in diff_lines:
+                escaped_line = html_mod.escape(line.rstrip('\n'))
+                if line.startswith('+') and not line.startswith('+++'):
+                    diff_html.append(f'<span class="diff-add">{escaped_line}</span>')
+                elif line.startswith('-') and not line.startswith('---'):
+                    diff_html.append(f'<span class="diff-del">{escaped_line}</span>')
+                elif line.startswith('@@'):
+                    diff_html.append(f'<span class="diff-hunk">{escaped_line}</span>')
+                else:
+                    diff_html.append(f'<span class="diff-ctx">{escaped_line}</span>')
+            replace_note = ' <span class="diff-flag">(replace all)</span>' if replace_all else ''
+            return f'''<div class="tool-file">{fp}{replace_note}</div>
+                <div class="diff-block"><pre>{"<br>".join(diff_html)}</pre></div>'''
+        else:
+            return f'<div class="tool-file">{fp}</div><div class="tool-note">No visible changes</div>'
+
+    elif name == 'Write':
+        fp = html_mod.escape(inp.get('file_path', ''))
+        content = inp.get('content', '')
+        if len(content) > 3000:
+            content = content[:3000] + f'\n... ({len(content) - 3000} more characters)'
+        escaped = html_mod.escape(content)
+        return f'''<div class="tool-file">{fp}</div>
+            <div class="code-block"><pre>{escaped}</pre></div>'''
+
+    elif name == 'Bash':
+        cmd = html_mod.escape(inp.get('command', ''))
+        desc = html_mod.escape(inp.get('description', ''))
+        desc_html = f'<div class="tool-desc">{desc}</div>' if desc else ''
+        return f'''{desc_html}<div class="code-block"><pre><code class="language-bash">{cmd}</code></pre></div>'''
+
+    elif name == 'Read':
+        fp = html_mod.escape(inp.get('file_path', ''))
+        offset = inp.get('offset', '')
+        limit = inp.get('limit', '')
+        range_str = ''
+        if offset or limit:
+            range_str = f' (lines {offset or 0}–{(offset or 0) + (limit or "?")})'
+        return f'<div class="tool-file">{fp}{range_str}</div>'
+
+    elif name == 'Grep':
+        pattern = html_mod.escape(inp.get('pattern', ''))
+        path = html_mod.escape(inp.get('path', '.'))
+        glob_p = html_mod.escape(inp.get('glob', ''))
+        return f'<div class="tool-file">Pattern: <code>{pattern}</code> in {path}{" glob: " + glob_p if glob_p else ""}</div>'
+
+    elif name == 'Glob':
+        pattern = html_mod.escape(inp.get('pattern', ''))
+        path = html_mod.escape(inp.get('path', '.'))
+        return f'<div class="tool-file">Pattern: <code>{pattern}</code> in {path}</div>'
+
+    elif name == 'Agent':
+        desc = html_mod.escape(inp.get('description', ''))
+        prompt = inp.get('prompt', '')
+        if len(prompt) > 1000:
+            prompt = prompt[:1000] + '...'
+        escaped_prompt = html_mod.escape(prompt)
+        return f'''<div class="tool-desc">{desc}</div>
+            <div class="code-block"><pre>{escaped_prompt}</pre></div>'''
+
+    else:
+        # Generic: show as JSON
+        try:
+            formatted = json.dumps(inp, indent=2)
+            if len(formatted) > 3000:
+                formatted = formatted[:3000] + '\n...'
+            return f'<div class="code-block"><pre>{html_mod.escape(formatted)}</pre></div>'
+        except Exception:
+            return f'<div class="code-block"><pre>{html_mod.escape(str(inp))}</pre></div>'
 
 
 # ============================================================
@@ -1768,6 +2431,246 @@ def serve_task_detail(label):
     return _render_page(f'Task: {name}', content)
 
 
+# ============================================================
+# CONVERSATIONS ROUTES
+# ============================================================
+
+@app.route('/conversations')
+def serve_conversations():
+    """Conversation index page — all sessions grouped by date."""
+    sessions = list_conversation_sessions()
+
+    total = len(sessions)
+
+    # Group by date label
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    week_start = today - timedelta(days=today.weekday())
+
+    groups = OrderedDict()
+    for s in sessions:
+        d = datetime.fromtimestamp(s['mtime']).date()
+        if d == today:
+            label = 'Today'
+        elif d == yesterday:
+            label = 'Yesterday'
+        elif d >= week_start:
+            label = 'This Week'
+        else:
+            label = d.strftime('%B %Y')
+
+        if label not in groups:
+            groups[label] = []
+        groups[label].append(s)
+
+    # Build rows — clean single-line per conversation
+    marker_svg = '<svg class="conv-marker" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12M2 8h12M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>'
+
+    # Build tab headers and group sections
+    tab_labels = list(groups.keys())
+    tabs_html = []
+    sections_html = []
+    for idx, (label, items) in enumerate(groups.items()):
+        tab_id = f'grp-{idx}'
+        tabs_html.append(f'<a class="group-tab" href="#{tab_id}">{html_mod.escape(label)}</a>')
+
+        rows = []
+        for s in items:
+            dt = datetime.fromtimestamp(s['mtime'])
+            if label in ('Today', 'Yesterday'):
+                time_str = dt.strftime('%-H:%M')
+            else:
+                time_str = dt.strftime('%-d %b')
+            preview = s['preview'] or '<span style="color:var(--text-tertiary);font-style:italic">Scheduled task</span>'
+            size_str = human_size(s['size'])
+
+            rows.append(f'''<div class="conv-row" onclick="window.location='/conversations/{s['id']}'">
+                {marker_svg}
+                <span class="conv-time">{time_str}</span>
+                <span class="conv-info"><span class="conv-preview">{preview}</span></span>
+                <span class="conv-size">{size_str}</span>
+            </div>''')
+
+        sections_html.append(f'''<div class="conv-group-section" id="{tab_id}">
+            <div class="conv-section-label">{html_mod.escape(label)}</div>
+            {"".join(rows)}
+        </div>''')
+
+    # Scroll-based tab highlighting JS
+    tab_js = '''<script>
+    (function() {
+        var tabs = document.querySelectorAll('.group-tab');
+        var sections = document.querySelectorAll('.conv-group-section');
+        function updateActive() {
+            var scrollTop = window.scrollY || document.documentElement.scrollTop;
+            var current = 0;
+            sections.forEach(function(s, i) {
+                if (s.getBoundingClientRect().top <= 120) current = i;
+            });
+            tabs.forEach(function(t) { t.classList.remove('active'); });
+            if (tabs[current]) tabs[current].classList.add('active');
+        }
+        window.addEventListener('scroll', updateActive);
+        updateActive();
+    })();
+    </script>'''
+
+    content = f'''<div class="conv-index">
+        <div class="conv-index-header">
+            <h1>Conversations</h1>
+            <div class="subtitle">{total} sessions</div>
+        </div>
+        <div class="conv-group-tabs">{"".join(tabs_html)}</div>
+        {"".join(sections_html)}
+    </div>
+    {tab_js}'''
+
+    return _render_page('Conversations', content)
+
+
+@app.route('/conversations/<session_id>')
+def serve_conversation_detail(session_id):
+    """Render a single conversation session."""
+    messages = parse_conversation(session_id)
+    if messages is None:
+        return Response(f'Conversation not found: {session_id}', status=404)
+
+    # Get file metadata
+    f = CONVERSATIONS_DIR / f'{session_id}.jsonl'
+    stat = f.stat()
+    dt = datetime.fromtimestamp(stat.st_mtime)
+
+    # Calculate duration
+    duration_str = ''
+    if messages:
+        first_ts = None
+        last_ts = None
+        for m in messages:
+            ts = m.get('timestamp', '')
+            if ts:
+                if not first_ts:
+                    first_ts = ts
+                last_ts = ts
+        if first_ts and last_ts:
+            try:
+                t1 = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
+                t2 = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
+                diff_secs = int((t2 - t1).total_seconds())
+                if diff_secs < 60:
+                    duration_str = f'{diff_secs}s'
+                elif diff_secs < 3600:
+                    duration_str = f'{diff_secs // 60}m'
+                else:
+                    h = diff_secs // 3600
+                    m_r = (diff_secs % 3600) // 60
+                    duration_str = f'{h}h {m_r}m' if m_r else f'{h}h'
+            except Exception:
+                pass
+
+    user_count = sum(1 for m in messages if m['role'] == 'user')
+    assistant_count = sum(1 for m in messages if m['role'] == 'assistant')
+    date_str = dt.strftime('%A, %B %-d, %Y at %-H:%M')
+
+    # Render messages (limit initial render for very large conversations)
+    max_initial = int(request.args.get('limit', 100))
+    total_msgs = len(messages)
+    render_msgs = messages[:max_initial]
+
+    msgs_html = []
+    for msg in render_msgs:
+        role = msg['role']
+        timestamp = msg.get('timestamp', '')
+        is_meta = msg.get('is_meta', False)
+        source_tool_id = msg.get('source_tool_id', '')
+        ts_display = ''
+        if timestamp:
+            try:
+                ts_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                ts_display = ts_dt.strftime('%-H:%M:%S')
+            except Exception:
+                pass
+
+        role_label = 'You' if role == 'user' else DISPLAY_NAME
+
+        # Detect skill/meta messages: collapse them
+        if role == 'user' and is_meta and source_tool_id:
+            # Extract skill name from content if possible
+            skill_name = ''
+            for block in msg['blocks']:
+                text = block.get('text', '')
+                if isinstance(text, str) and 'Base directory for this skill' in text:
+                    # Try to extract skill path
+                    match = re.search(r'skills/([^/\n]+)', text)
+                    if match:
+                        skill_name = match.group(1)
+                    break
+            label = f'Skill loaded: {skill_name}' if skill_name else 'Skill prompt loaded'
+            # Count approximate size
+            total_chars = sum(len(b.get('text', '')) for b in msg['blocks'])
+            size_note = f'{total_chars:,} chars'
+
+            msgs_html.append(f'''<div class="conv-message role-{role} conv-meta-msg">
+                <details class="conv-skill-loaded">
+                    <summary>
+                        <span class="skill-icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5v11"/><path d="M3.5 5l3.5-3.5L10.5 5"/><path d="M2 8.5h10"/><path d="M4 11h6"/></svg></span>
+                        {html_mod.escape(label)} <span class="skill-size">({size_note})</span>
+                    </summary>
+                    <div class="skill-body">{''.join(_render_conversation_block(b, i) for i, b in enumerate(msg['blocks']))}</div>
+                </details>
+            </div>''')
+            continue
+
+        blocks_html = []
+        for i, block in enumerate(msg['blocks']):
+            blocks_html.append(_render_conversation_block(block, i))
+
+        msgs_html.append(f'''<div class="conv-message role-{role}">
+            <div class="conv-role-label">{role_label} <span class="conv-ts">{ts_display}</span></div>
+            {"".join(blocks_html)}
+        </div>''')
+
+    # "Load more" if truncated
+    load_more = ''
+    if total_msgs > max_initial:
+        remaining = total_msgs - max_initial
+        load_more = f'<a href="/conversations/{session_id}?limit={total_msgs}" class="conv-load-more">Load {remaining} more messages</a>'
+
+    content = f'''<div class="conv-detail">
+        <div class="conv-detail-topbar">
+            <a href="/conversations" class="conv-detail-back">&larr; All conversations</a>
+        </div>
+        <div class="conv-detail-header">
+            <h1>{date_str}</h1>
+            <div class="conv-header-meta">
+                <span>{user_count + assistant_count} messages</span>
+                {f'<span>{duration_str}</span>' if duration_str else ''}
+                <span>{human_size(stat.st_size)}</span>
+                <span style="opacity:0.5">{session_id[:8]}</span>
+            </div>
+        </div>
+        {"".join(msgs_html)}
+        {load_more}
+    </div>
+    <script>
+    // Render markdown in conversation text blocks
+    document.querySelectorAll('.conv-markdown[data-raw]').forEach(function(el) {{
+        if (typeof marked !== 'undefined') {{
+            try {{
+                var raw = el.getAttribute('data-raw');
+                el.innerHTML = marked.parse(raw);
+                el.querySelectorAll('pre code').forEach(function(block) {{
+                    if (typeof hljs !== 'undefined') hljs.highlightElement(block);
+                }});
+            }} catch(e) {{
+                // fallback to escaped text already in element
+            }}
+        }}
+    }});
+    </script>'''
+
+    return _render_page(f'Conversation: {date_str}', content)
+
+
 @app.route('/raw/<path:filepath>')
 def serve_raw_file(filepath):
     """Serve a file with its native MIME type."""
@@ -1881,6 +2784,9 @@ def _serve_file(p):
 
         if ext == '.md':
             escaped = html_mod.escape(text)
+            # For <script type="text/plain">, content is raw text (browser won't decode entities),
+            # so we use the original text, only escaping </script> to prevent tag closure.
+            raw_for_script = text.replace('</script>', '<\\/script>')
             is_editable = p.resolve() in EDITABLE_FILES
             edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html_mod.escape(str(p))}">Edit</button>' if is_editable else ''
             edit_area = '''<div id="edit-area" style="display:none;">
@@ -1896,7 +2802,7 @@ def _serve_file(p):
                     <span class="filename" style="margin-bottom:0; padding-bottom:0; border-bottom:none;">{p.name} &middot; {human_size(p.stat().st_size)}</span>
                     {edit_button}
                 </div>
-                <script id="markdown-raw" type="text/plain">{escaped}</script>
+                <script id="markdown-raw" type="text/plain">{raw_for_script}</script>
                 <div id="markdown-rendered" class="markdown-body"></div>
                 {edit_area}
             </div>'''
