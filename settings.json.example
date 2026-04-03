@@ -1,0 +1,70 @@
+{
+  "model": "opus[1m]",
+  "permissions": {
+    "deny": [
+      "Bash(gws-YOUR_TEAMMATE *)",
+      "Bash(gws gmail +send *)",
+      "Bash(gws gmail +reply *)",
+      "Bash(gws gmail +reply-all *)",
+      "Bash(gws gmail +forward *)",
+      "Bash(gws gmail users messages send *)",
+      "Bash(gws gmail users drafts send *)",
+      "Bash(gws gmail users drafts create *)",
+      "mcp__google-workspace",
+      "Edit(//Users/YOUR_USERNAME/CLAUDE.md)",
+      "Edit(//Users/YOUR_USERNAME/identity.md)",
+      "Edit(//Users/YOUR_USERNAME/about-you-and-how-you-came-to-life.md)",
+      "Edit(//Users/YOUR_USERNAME/teammates/teammates-access.md)",
+      "Edit(//Users/YOUR_USERNAME/.claude/**)",
+      "Write(//Users/YOUR_USERNAME/CLAUDE.md)",
+      "Write(//Users/YOUR_USERNAME/identity.md)",
+      "Write(//Users/YOUR_USERNAME/about-you-and-how-you-came-to-life.md)",
+      "Write(//Users/YOUR_USERNAME/teammates/teammates-access.md)",
+      "Write(//Users/YOUR_USERNAME/.claude/**)",
+      "Read(//Users/YOUR_USERNAME/.claude/projects/**/*.jsonl)",
+      "Read(//Users/YOUR_USERNAME/.claude/settings*)",
+      "Bash(launchctl *)",
+      "Bash(crontab *)"
+    ],
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Grep",
+      "Glob",
+      "Bash",
+      "WebSearch",
+      "WebFetch",
+      "Agent"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/YOUR_USERNAME/scripts/block-gws-email-send.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "more-ai@claude-home-base": true,
+    "tactical@claude-home-base": true,
+    "creative@claude-home-base": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-home-base": {
+      "source": {
+        "source": "github",
+        "repo": "YOUR_ORG/claude-home-base"
+      },
+      "autoUpdate": true
+    }
+  },
+  "skipDangerousModePermissionPrompt": true
+}

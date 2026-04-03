@@ -31,8 +31,84 @@ BASE_DIR = Path(os.environ.get("FILE_EXPLORER_BASE_DIR", str(Path.home())))
 PORT = int(os.environ.get("FILE_EXPLORER_PORT", "8888"))
 DISPLAY_NAME = os.environ.get("FILE_EXPLORER_NAME", "Your AI Employee")
 
-EDITABLE_FILES = {(BASE_DIR / "CLAUDE.md").resolve()}
+# All .md files are editable via the browser UI
 
+# ============================================================
+# TAILSCALE IDENTITY — maps Tailscale IPs to team members
+# ============================================================
+# Each team member's Tailscale IP is mapped to their name and access ring.
+# Rings follow teammates-access.md: 1 = supervisor, 2 = core team, 3 = wider team.
+#
+# HOW TO UPDATE: If a new device joins the tailnet or someone complains they're
+# seeing the "unknown visitor" view, ask them to run `tailscale ip -4` on their
+# machine and add the IP here. On macOS App Store Tailscale, the IP is visible
+# in the Tailscale menu bar icon under "This machine."
+TAILSCALE_USERS = {
+    "100.123.10.100": {"name": "Claudie", "ring": 0},   # this machine (self)
+    "100.71.120.89":  {"name": "Nityesh", "ring": 1},
+    # Add more team members here as they connect:
+    # "100.x.x.x": {"name": "Natalia", "ring": 1},
+    # "100.x.x.x": {"name": "Mike", "ring": 2},
+    # "100.x.x.x": {"name": "Brooker", "ring": 2},
+}
+
+# Paths restricted by ring. Ring N can see everything rings > N cannot.
+# Ring 1 (supervisors): full access
+# Ring 2 (core team): no memory, no session logs, no config
+# Ring 3+ / unknown: no memory, no logs, no config, no client data, no consulting ops
+_MEMORY_DIR = str(BASE_DIR / ".claude" / "projects" / f"-{str(BASE_DIR).replace('/', '-').lstrip('-')}" / "memory")
+
+# Directories hidden from ring 2+
+RING2_HIDDEN_PATHS = {
+    _MEMORY_DIR,
+    str(BASE_DIR / ".claude"),
+}
+
+# Directories hidden from ring 3+ / unknown (in addition to ring 2 restrictions)
+RING3_HIDDEN_PATHS = RING2_HIDDEN_PATHS | {
+    str(BASE_DIR / "Projects" / "slack-bot"),
+    str(BASE_DIR / "teammates"),
+}
+
+
+def get_visitor():
+    """Identify the connecting visitor by their Tailscale IP.
+    Returns dict with 'name' and 'ring', or a default for unknown visitors."""
+    ip = request.remote_addr
+    user = TAILSCALE_USERS.get(ip)
+    if user:
+        return user
+    # Unknown Tailscale IP — treat as ring 99 (most restricted)
+    return {"name": "Visitor", "ring": 99}
+
+
+def is_path_allowed(path_str, ring):
+    """Check if a resolved path is accessible for the given ring."""
+    if ring <= 1:
+        return True  # supervisors see everything
+    resolved = str(Path(path_str).resolve())
+    hidden = RING2_HIDDEN_PATHS if ring <= 2 else RING3_HIDDEN_PATHS
+    for restricted in hidden:
+        if resolved == restricted or resolved.startswith(restricted + "/"):
+            return False
+    return True
+
+
+def get_bookmarks_for_ring(ring):
+    """Return the bookmark list filtered for the visitor's access ring."""
+    all_bookmarks = [
+        ("Home", str(BASE_DIR)),
+        ("Projects", str(BASE_DIR / "projects")),
+        ("Work", str(BASE_DIR / "work")),
+        ("Diary", str(BASE_DIR / "diary")),
+        ("Bookmarks", str(BASE_DIR / "bookmarks")),
+        ("Discoveries", str(BASE_DIR / "discoveries")),
+        ("Memory", _MEMORY_DIR),
+    ]
+    return [(name, path) for name, path in all_bookmarks if is_path_allowed(path, ring)]
+
+
+# Default bookmarks for backward compat (used nowhere now, kept for reference)
 BOOKMARKS = [
     ("Home", str(BASE_DIR)),
     ("Projects", str(BASE_DIR / "projects")),
@@ -1689,11 +1765,14 @@ def human_date(ts):
     return dt.strftime("%b %d, %Y %H:%M")
 
 
-def make_sidebar(current_path=''):
+def make_sidebar(current_path='', visitor=None):
+    visitor = visitor or get_visitor()
+    ring = visitor["ring"]
+    bookmarks = get_bookmarks_for_ring(ring)
+
     links = []
-    for name, path in BOOKMARKS:
+    for name, path in bookmarks:
         icon_svg = SIDEBAR_ICONS.get(name, SIDEBAR_ICONS['Home'])
-        # Determine if this sidebar item is active
         active = ''
         if current_path and current_path.startswith(path):
             active = ' active'
@@ -1705,16 +1784,18 @@ def make_sidebar(current_path=''):
     claude_icon = SIDEBAR_ICONS['CLAUDE.md']
     links.append(f'<a href="/browse{claude_md_path}" class="{claude_active}"><span class="icon">{claude_icon}</span>CLAUDE.md</a>')
 
-    # Scheduled Tasks link (only if task prefixes are configured)
-    if TASK_PREFIXES:
+    # Scheduled Tasks link — ring 1 only (system internals)
+    if TASK_PREFIXES and ring <= 1:
         tasks_active = ' active' if current_path == 'Scheduled Tasks' or current_path.startswith('Task:') else ''
         tasks_icon = SIDEBAR_ICONS['Scheduled Tasks']
         links.append(f'<a href="/tasks" class="{tasks_active}"><span class="icon">{tasks_icon}</span>Scheduled Tasks</a>')
 
-    # Conversations link
-    conv_active = ' active' if current_path == 'Conversations' or current_path.startswith('Conversation:') else ''
-    conv_icon = SIDEBAR_ICONS['Conversations']
-    links.append(f'<a href="/conversations" class="{conv_active}"><span class="icon">{conv_icon}</span>Conversations</a>')
+    # Conversations link — ring 1 only (session logs)
+    if ring <= 1:
+        conv_active = ' active' if current_path == 'Conversations' or current_path.startswith('Conversation:') else ''
+        conv_icon = SIDEBAR_ICONS['Conversations']
+        links.append(f'<a href="/conversations" class="{conv_active}"><span class="icon">{conv_icon}</span>Conversations</a>')
+
     return "\n".join(links)
 
 
@@ -1747,10 +1828,11 @@ def _file_icon_svg(name):
     return FILE_TYPE_SVGS.get(ext, FILE_TYPE_SVGS['_default'])
 
 
-def _render_page(path_label, content):
+def _render_page(path_label, content, visitor=None):
     """Wrap content in the full HTML template with sidebar and breadcrumb."""
+    visitor = visitor or get_visitor()
     page = HTML_TEMPLATE.replace('DISPLAY_NAME_PLACEHOLDER', DISPLAY_NAME)
-    page = page.replace('SIDEBAR_LINKS', make_sidebar(path_label))
+    page = page.replace('SIDEBAR_LINKS', make_sidebar(path_label, visitor))
     page = page.replace('BREADCRUMB', make_breadcrumb(path_label))
     page = page.replace('CONTENT', content)
     return Response(page, content_type='text/html; charset=utf-8')
@@ -2141,11 +2223,16 @@ def index():
 @app.route('/save', methods=['POST'])
 def save_file():
     try:
+        visitor = get_visitor()
         data = request.get_json()
         file_path = Path(data['path']).resolve()
 
-        if file_path not in EDITABLE_FILES:
-            return jsonify(ok=False, error='This file is not editable'), 403
+        if file_path.suffix.lower() != '.md':
+            return jsonify(ok=False, error='Only .md files are editable'), 403
+        if not file_path.is_relative_to(BASE_DIR):
+            return jsonify(ok=False, error='File is outside the served directory'), 403
+        if not is_path_allowed(str(file_path), visitor["ring"]):
+            return jsonify(ok=False, error='Access denied'), 403
 
         file_path.write_text(data['content'])
         return jsonify(ok=True)
@@ -2155,6 +2242,10 @@ def save_file():
 
 @app.route('/tasks')
 def serve_tasks():
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return Response('Access denied — supervisors only', status=403)
+    # original logic below
     jobs = get_launchd_jobs()
 
     # Generate timeline SVG
@@ -2207,6 +2298,9 @@ def serve_tasks():
 
 @app.route('/tasks/<path:label>')
 def serve_task_detail(label):
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return Response('Access denied — supervisors only', status=403)
     jobs = get_launchd_jobs()
     job = None
     for j in jobs:
@@ -2439,6 +2533,9 @@ def serve_task_detail(label):
 @app.route('/conversations')
 def serve_conversations():
     """Conversation index page — all sessions grouped by date."""
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return Response('Access denied — supervisors only', status=403)
     sessions = list_conversation_sessions()
 
     total = len(sessions)
@@ -2532,6 +2629,9 @@ def serve_conversations():
 @app.route('/conversations/<session_id>')
 def serve_conversation_detail(session_id):
     """Render a single conversation session."""
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return Response('Access denied — supervisors only', status=403)
     messages = parse_conversation(session_id)
     if messages is None:
         return Response(f'Conversation not found: {session_id}', status=404)
@@ -2675,12 +2775,15 @@ def serve_conversation_detail(session_id):
 @app.route('/raw/<path:filepath>')
 def serve_raw_file(filepath):
     """Serve a file with its native MIME type."""
+    visitor = get_visitor()
     p = Path('/' + filepath)
     if not p.exists():
         return Response(f'Not found: {filepath}', status=404)
     try:
         p.resolve().relative_to(BASE_DIR.resolve())
     except ValueError:
+        return Response('Access denied', status=403)
+    if not is_path_allowed(str(p), visitor["ring"]):
         return Response('Access denied', status=403)
     mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
     return Response(p.read_bytes(), content_type=mime)
@@ -2689,6 +2792,7 @@ def serve_raw_file(filepath):
 @app.route('/browse')
 @app.route('/browse/<path:filepath>')
 def serve_browse(filepath=''):
+    visitor = get_visitor()
     file_path = '/' + filepath if filepath else str(BASE_DIR)
     p = Path(file_path)
 
@@ -2701,19 +2805,28 @@ def serve_browse(filepath=''):
     except ValueError:
         return Response('Access denied', status=403)
 
+    # Tailscale identity-based access control
+    if not is_path_allowed(str(p), visitor["ring"]):
+        return Response('Access denied', status=403)
+
     if p.is_dir():
-        return _serve_directory(p)
+        return _serve_directory(p, visitor)
     else:
         return _serve_file(p)
 
 
-def _serve_directory(p):
+def _serve_directory(p, visitor=None):
+    visitor = visitor or get_visitor()
+    ring = visitor["ring"]
     entries = []
     try:
         for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
             if item.name in SKIP_DIRS:
                 continue
             if item.name.startswith('.') and item.name not in ('.claude',):
+                continue
+            # Filter out restricted paths for this visitor
+            if not is_path_allowed(str(item), ring):
                 continue
             try:
                 stat = item.stat()
@@ -2788,7 +2901,7 @@ def _serve_file(p):
             # For <script type="text/plain">, content is raw text (browser won't decode entities),
             # so we use the original text, only escaping </script> to prevent tag closure.
             raw_for_script = text.replace('</script>', '<\\/script>')
-            is_editable = p.resolve() in EDITABLE_FILES
+            is_editable = True
             edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html_mod.escape(str(p))}">Edit</button>' if is_editable else ''
             edit_area = '''<div id="edit-area" style="display:none;">
                 <div class="edit-bar" style="margin-bottom:12px; justify-content:flex-end;">

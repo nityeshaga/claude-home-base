@@ -89,6 +89,9 @@ if not PROJECT_DIR:
     raise SystemExit(1)
 
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1800"))  # 30 min default
+
+# Ring 1 users get --dangerously-skip-permissions; everyone else gets --permission-mode dontAsk
+RING_1_USERS = {"U0AH2TTHDK8", "U0AH8J541RA"}  # Nityesh, Natalia
 MAX_SLACK_MSG_LEN = 3900
 PORT = int(os.environ.get("PORT", "3000"))
 
@@ -263,7 +266,7 @@ _live_sessions: dict[str, LiveSession] = {}
 _live_sessions_lock = threading.Lock()
 
 
-def _spawn_claude_process(session_id: str | None = None) -> subprocess.Popen:
+def _spawn_claude_process(session_id: str | None = None, user_id: str = "") -> subprocess.Popen:
     """Spawn a long-lived Claude CLI process with stream-json I/O."""
     cmd = [
         "claude",
@@ -271,10 +274,13 @@ def _spawn_claude_process(session_id: str | None = None) -> subprocess.Popen:
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
-        "--permission-mode", "bypassPermissions",
         "--model", "claude-opus-4-6[1m]",
         "--effort", "medium",
     ]
+    if user_id in RING_1_USERS:
+        cmd.extend(["--permission-mode", "bypassPermissions"])
+    else:
+        cmd.extend(["--permission-mode", "dontAsk"])
     if session_id:
         cmd.extend(["--resume", session_id])
 
@@ -290,7 +296,8 @@ def _spawn_claude_process(session_id: str | None = None) -> subprocess.Popen:
         text=True,
         cwd=PROJECT_DIR,
     )
-    logger.info(f"Spawned Claude process pid={proc.pid} (resume={session_id or 'none'})")
+    perm_mode = "bypassPermissions" if user_id in RING_1_USERS else "dontAsk"
+    logger.info(f"Spawned Claude process pid={proc.pid} (resume={session_id or 'none'}, user={user_id}, permissions={perm_mode})")
     return proc
 
 
@@ -341,7 +348,7 @@ def _reader_loop(session: LiveSession) -> None:
             _live_sessions.pop(session.thread_ts, None)
 
 
-def _get_or_create_live_session(thread_ts: str, channel: str) -> LiveSession:
+def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "") -> LiveSession:
     """Get an existing live session or create a new one for a thread."""
     with _live_sessions_lock:
         session = _live_sessions.get(thread_ts)
@@ -361,7 +368,7 @@ def _get_or_create_live_session(thread_ts: str, channel: str) -> LiveSession:
                 oldest.proc.kill()
 
         saved_session_id = _get_session(thread_ts)
-        proc = _spawn_claude_process(session_id=saved_session_id)
+        proc = _spawn_claude_process(session_id=saved_session_id, user_id=user_id)
         session = LiveSession(
             proc=proc,
             session_id=saved_session_id,
@@ -748,7 +755,7 @@ def process_message_async(event: dict) -> None:
             f"A new message in public channel #{channel_name}. "
             "Only respond if you're directly addressed by name or tagged "
             "or if you're already part of the conversation thread. "
-            "Respond with exactly \"SKIP\" in all other cases.\n\n"
+            "Respond with exactly \"SKIP\" in ALL other cases.\n\n"
         )
         if thread_context:
             text = prefix + f"{thread_context}\n\n[{sender_name}]({user_id}):\n{text}"
@@ -795,7 +802,7 @@ def process_message_async(event: dict) -> None:
 
     start = time.time()
     try:
-        session = _get_or_create_live_session(thread_ts, channel)
+        session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
 
         # Acquire turn_lock — this serializes the send→wait cycle.
         # If another message is already being processed, we block here.
