@@ -1331,30 +1331,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
 
   /* Detail page */
-  .conv-detail { max-width: 860px; }
+  .conv-detail { max-width: 760px; margin: 0 auto; }
   .conv-detail-back {
     font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary);
     text-decoration: none; display: inline-block; margin-bottom: 16px;
   }
   .conv-detail-back:hover { color: var(--accent); }
-  .conv-detail-header { margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px; }
-  .conv-detail-header h1 { font-family: var(--font-prose); font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+  .conv-detail-header { margin-bottom: 32px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 20px; }
+  .conv-detail-header h1 { font-family: var(--font-prose); font-size: 24px; font-weight: 700; margin: 0 0 10px; }
   .conv-detail-header .conv-header-meta {
     font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
     display: flex; gap: 16px; flex-wrap: wrap;
   }
 
   /* Message blocks */
-  .conv-message { margin-bottom: 4px; padding: 0; }
-  .conv-message.role-user { }
-  .conv-message.role-assistant { }
+  .conv-message { margin-bottom: 0; padding: 0; }
+  .conv-message + .conv-message.role-user { margin-top: 28px; }
+  .conv-message.role-user + .conv-message.role-assistant { margin-top: 20px; }
 
   .conv-message.role-user .conv-text {
     background: rgba(212, 165, 116, 0.06);
     border-left: 3px solid var(--accent);
-    padding: 14px 18px;
+    padding: 16px 20px;
     border-radius: 0 6px 6px 0;
-    margin: 12px 0;
+    margin: 8px 0 0;
   }
   .conv-message.role-user .conv-text .conv-markdown {
     font-family: var(--font-prose); font-size: 15px; line-height: 1.7;
@@ -1362,7 +1362,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
 
   .conv-message.role-assistant .conv-text {
-    padding: 10px 18px;
+    padding: 8px 0;
     margin: 4px 0;
   }
   .conv-message.role-assistant .conv-text .conv-markdown {
@@ -1395,15 +1395,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   /* Thinking blocks */
   .conv-thinking {
-    margin: 6px 0; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;
+    margin: 3px 0; border-radius: 6px; font-family: var(--font-mono); font-size: 11px;
   }
   .conv-thinking summary {
-    cursor: pointer; color: var(--text-tertiary); padding: 6px 10px;
+    cursor: pointer; color: var(--text-tertiary); padding: 4px 10px;
     display: flex; align-items: center; gap: 6px; user-select: none;
-    border-radius: 6px; transition: background 0.15s;
+    border-radius: 6px; transition: background 0.15s; opacity: 0.6;
   }
-  .conv-thinking summary:hover { background: var(--bg-surface); color: var(--text-secondary); }
-  .conv-thinking .thinking-icon { display: flex; align-items: center; opacity: 0.6; }
+  .conv-thinking summary:hover { background: var(--bg-surface); opacity: 1; color: var(--text-secondary); }
+  .conv-thinking .thinking-icon { display: flex; align-items: center; }
   .conv-thinking .thinking-body {
     background: var(--bg-sidebar); border: 1px solid var(--border-subtle);
     border-radius: 0 0 6px 6px; padding: 12px 14px; margin-top: 2px;
@@ -1416,19 +1416,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   /* Tool use blocks */
   .conv-tool-use {
-    margin: 6px 0; border-radius: 6px; font-family: var(--font-mono); font-size: 13px;
+    margin: 3px 0; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;
   }
   .conv-tool-use summary {
-    cursor: pointer; color: var(--text-secondary); padding: 8px 12px;
+    cursor: pointer; color: var(--text-secondary); padding: 6px 10px;
     display: flex; align-items: center; gap: 6px; user-select: none;
-    background: var(--bg-surface); border: 1px solid var(--border-subtle);
     border-radius: 6px; transition: background 0.15s;
   }
-  .conv-tool-use[open] summary { border-radius: 6px 6px 0 0; }
-  .conv-tool-use summary:hover { background: var(--bg-elevated); }
-  .conv-tool-use .tool-icon { display: flex; align-items: center; color: var(--accent); }
+  .conv-tool-use[open] summary { background: var(--bg-surface); border-radius: 6px 6px 0 0; }
+  .conv-tool-use summary:hover { background: var(--bg-surface); }
+  .conv-tool-use .tool-icon { display: flex; align-items: center; color: var(--accent); opacity: 0.7; }
   .conv-tool-use .tool-name { font-weight: 500; color: var(--accent); }
-  .conv-tool-use .tool-summary { color: var(--text-tertiary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-tool-use .tool-summary { color: var(--text-tertiary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conv-tool-use .tool-body {
     background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-top: none;
     border-radius: 0 0 6px 6px; padding: 12px 14px; overflow-x: auto;
@@ -1456,17 +1455,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   /* Tool result blocks */
   .conv-tool-result {
-    margin: 2px 0 6px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;
+    margin: 0 0 3px; border-radius: 6px; font-family: var(--font-mono); font-size: 11px;
   }
   .conv-tool-result summary {
-    cursor: pointer; color: var(--text-tertiary); padding: 6px 12px;
+    cursor: pointer; color: var(--text-tertiary); padding: 4px 10px;
     display: flex; align-items: center; gap: 6px; user-select: none;
-    border-radius: 6px; transition: background 0.15s;
+    border-radius: 6px; transition: background 0.15s; opacity: 0.7;
   }
-  .conv-tool-result summary:hover { background: var(--bg-surface); }
+  .conv-tool-result summary:hover { background: var(--bg-surface); opacity: 1; }
   .conv-tool-result .result-icon { display: flex; align-items: center; color: var(--status-green); }
   .conv-tool-result.tool-error .result-icon { color: #BF616A; }
-  .conv-tool-result .result-preview { color: var(--text-tertiary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 500px; }
+  .conv-tool-result.tool-error summary { opacity: 1; }
+  .conv-tool-result .result-preview { color: var(--text-tertiary); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 500px; }
   .conv-tool-result .result-body {
     background: var(--bg-sidebar); border: 1px solid var(--border-subtle);
     border-radius: 0 0 6px 6px; padding: 12px 14px; margin-top: 2px;
@@ -1478,12 +1478,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   /* Role label */
   .conv-role-label {
-    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
-    text-transform: uppercase; letter-spacing: 0.05em;
-    padding: 16px 18px 4px; color: var(--text-tertiary);
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 0 0 6px; color: var(--text-tertiary);
     display: flex; align-items: center; gap: 8px;
   }
-  .conv-role-label .conv-ts { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.7; }
+  .conv-message.role-user .conv-role-label { color: var(--accent); }
+  .conv-role-label .conv-ts { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.6; font-size: 10px; }
 
   /* Load more button */
   .conv-load-more {
@@ -1531,7 +1532,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   /* Top bar with back + Slack button */
   .conv-detail-topbar {
     display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
   }
   .conv-slack-btn {
     font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);
