@@ -24,8 +24,8 @@
     {
       "name": "creative",
       "source": "./plugins/creative",
-      "description": "Creative direction for any project \u2014 websites, apps, products, brands, dashboards, tools. Acts as a creative director who thinks through purpose, story, and feeling before any implementation.",
-      "version": "1.0.1"
+      "description": "Creative direction and pixel-perfect UI implementation \u2014 websites, apps, products, brands, dashboards, tools. Acts as a creative director who thinks through purpose, story, and feeling before any implementation, and as a precision UI engineer who builds designs with zero visual deviation.",
+      "version": "1.0.2"
     }
   ]
 }
