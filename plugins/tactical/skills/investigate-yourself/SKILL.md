@@ -59,6 +59,7 @@ Read the bot script (check your CLAUDE.md for its location), specifically the me
 - What sender attribution was prepended?
 - Were there file attachments that got downloaded and prepended?
 - For channel messages: was any "only respond if directly addressed" prefix added?
+- **Critical: compare the raw event text to what appeared in the session log.** Check for anything stripped, reformatted, or lost — not just what was added. Regex substitutions in the bot script (e.g., stripping @mentions) can silently remove context that changes who a message is addressed to.
 
 **Layer 3 — Session logs**
 
