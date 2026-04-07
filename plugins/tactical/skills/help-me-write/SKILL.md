@@ -18,4 +18,8 @@ For example, things that you can do are adding headings and subheadings, moving 
 
 I want to write an article. Your job is to interview me to clarify things and help me improve this article.
 
-Use the /interview-me to understand how to conduct an interview.
+# Help me *Rewrite*
+
+If on the other hand, I want to rewrite any particular piece, I want you to go section by section and have you interview me for each section so that we can nail down what's wrong with it and make it tighter and make it more comprehensive from different aspects. I want you to ask me a maximum of one question at a time and up to three questions per section. And you can also share your ideas. And this is going to be a collaborative process. So we will rewrite this together because I know you can do this. You're a great writer. Let's take a step back and think through the perspective of somebody who has launched, who has created their own security agents like AI employees and they're unsure about security.
+
+Use the interview-me skill to understand how to conduct an interview.
