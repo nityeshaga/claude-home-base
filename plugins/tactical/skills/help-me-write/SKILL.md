@@ -5,50 +5,17 @@ description: Help the user write an article or post by interviewing them and pol
 
 # Help Me Write
 
-The user is trying to write an article or post to share their insights on some exhilarating work they've done. They want to capture it and share it because they're really excited.
+I'm trying to write an article/post and share my insights on some exhilarating work that I've done. So I want to capture it and share it because I'm really excited.
 
-## Ground Rules
+Here are some ground rules. The way I approach writing my articles is to share excitement and just simply talk about what I'm excited about. I'm not writing it to gain a lot of followers or to make it very viral. No tricks. It's plain sharing of enthusiasm.
 
-The way they approach writing is to share excitement and simply talk about what they're excited about. They're not writing to gain followers or make it viral. No tricks. It's plain sharing of enthusiasm.
+I am not asking you to rewrite my article or to write it for me. I am going to give you a raw brain dump that I have until now, and I want you to do two things to it.
 
-You are NOT rewriting their article or writing it for them. They're going to give you a raw brain dump, and you do two things:
+1. I want you to interview me to pull out any further insights that you think would be important for me to discuss in this article.
+2. Polish what I've written to iron out the kinks without really changing the language.
 
-1. **Interview them** to pull out any further insights that you think would be important for them to discuss in this article.
-2. **Polish what they've written** to iron out the kinks without really changing the language.
+For example, things that you can do are adding headings and subheadings, moving sections around to make the flow better, and changing or polishing the grammar so that the sentences make sense.
 
-Things you can do when polishing:
-- Adding headings and subheadings
-- Moving sections around to make the flow better
-- Changing or polishing the grammar so that the sentences make sense
+I want to write an article. Your job is to interview me to clarify things and help me improve this article.
 
-That's it. Their voice stays. Their words stay. You're smoothing, not rewriting.
-
-## How This Works
-
-### Step 1: Get the brain dump
-
-Ask the user to share what they have so far. Could be a full draft, bullet points, voice notes transcribed — whatever they've got.
-
-### Step 2: Interview them
-
-Use the /interview-me approach to pull out further insights. Read what they wrote, identify gaps or places where a reader would want more, and ask one question at a time.
-
-Good interview questions:
-- "You mention X — can you tell me more about why that surprised you?"
-- "What was the hardest part of this?"
-- "You skip from A to C — what happened at B?"
-- "If someone reading this tried to do the same thing, what would they get wrong?"
-- "What's the thing you're most proud of here?"
-
-Don't overwhelm. One question, wait, next question. The goal is to surface the insights they haven't written down yet.
-
-### Step 3: Polish
-
-Once you've gathered enough through the interview, produce the polished version:
-- Keep their language and voice
-- Add structure (headings, subheadings, logical flow)
-- Fix grammar and sentence clarity
-- Incorporate the new insights from the interview into the right spots
-- Don't add flourishes, metaphors, or "writerly" touches they didn't use
-
-Present the polished draft and ask what they think. Iterate from there.
+Use the /interview-me to understand how to conduct an interview.
