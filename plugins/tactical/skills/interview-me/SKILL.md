@@ -31,10 +31,3 @@ pid=$(cat /tmp/discovery-timer-pid 2>/dev/null) && if ps -p $pid > /dev/null 2>&
 
 Don't overwhelm with multiple questions. One question, wait for response, check timer, next question.
 
-## When Time Is Up
-
-Summarize what you learned:
-1. **Who they are** — role, context, what they care about
-2. **What they're trying to do** — the goal or problem they described
-3. **Key insights** — the 2-3 most important things that came out
-4. **Open questions** — what still needs to be figured out
