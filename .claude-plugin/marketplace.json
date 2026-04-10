@@ -19,7 +19,7 @@
       "name": "tactical",
       "source": "./plugins/tactical",
       "description": "Structured workflows for thinking, creativity, decision-making, and operational work \u2014 chief of staff (email, briefs, action tracking), brainstorming sessions, prompt engineering.",
-      "version": "2.1.3"
+      "version": "2.2.0"
     },
     {
       "name": "creative",
