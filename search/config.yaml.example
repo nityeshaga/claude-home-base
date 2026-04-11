@@ -1,0 +1,39 @@
+# Home Base Search — directories to index
+# type: markdown | jsonl
+# Each entry is a directory that will be recursively scanned
+
+directories:
+  # Your notes and writing
+  - path: ~/notes
+    name: notes
+    type: markdown
+
+  # Claude Code memory files
+  - path: ~/.claude/projects/-Users-$USER/memory
+    name: memory
+    type: markdown
+
+  # Your projects (skip build artifacts)
+  - path: ~/projects
+    name: projects
+    type: markdown
+    exclude:
+      - node_modules
+      - .git
+      - venv
+      - __pycache__
+      - .next
+      - dist
+      - build
+
+  # Claude Code conversation logs
+  - path: ~/.claude/projects/-Users-$USER
+    name: conversations
+    type: jsonl
+
+# Database location (relative to this directory works too)
+database: ./search.db
+
+# Chunking settings
+chunk_size: 1000  # characters per chunk
+chunk_overlap: 200  # overlap between chunks
