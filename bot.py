@@ -88,10 +88,37 @@ if not PROJECT_DIR:
     logger.error("PROJECT_DIR not set. Add it to .env")
     raise SystemExit(1)
 
-CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1800"))  # 30 min default
+CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "7200"))  # 2 hour default
 
-# Ring 1 users get --dangerously-skip-permissions; everyone else gets --permission-mode dontAsk
-RING_1_USERS = {"U0AH2TTHDK8", "U0AH8J541RA"}  # Nityesh, Natalia
+# Supervisor users get --dangerously-skip-permissions; everyone else gets --permission-mode dontAsk
+SUPERVISOR_USERS = set(
+    u.strip() for u in os.environ.get("SUPERVISOR_USERS", "").split(",") if u.strip()
+) or AUTHORIZED_USERS  # default: all authorized users are supervisors
+
+# Restricted users get limited tool access (--allowedTools / --disallowedTools).
+# Non-supervisors who aren't in RESTRICTED_USERS get plain dontAsk with no tool filtering.
+RESTRICTED_USERS = set(
+    u.strip() for u in os.environ.get("RESTRICTED_USERS", "").split(",") if u.strip()
+)
+RESTRICTED_ALLOWED_TOOLS = [
+    t.strip() for t in os.environ.get(
+        "RESTRICTED_ALLOWED_TOOLS",
+        "Read,Edit,Write,Grep,Glob,Bash,WebSearch,WebFetch,Agent"
+    ).split(",") if t.strip()
+]
+RESTRICTED_DISALLOWED_TOOLS = [
+    t.strip() for t in os.environ.get("RESTRICTED_DISALLOWED_TOOLS", "").split(",") if t.strip()
+]
+
+# Channel filtering — only respond in channels whose names start with one of these prefixes.
+# Leave empty to respond in all channels.
+ALLOWED_CHANNEL_PREFIXES = tuple(
+    p.strip() for p in os.environ.get("ALLOWED_CHANNELS", "").split(",") if p.strip()
+)
+
+# Trust battery — optional. Set to a directory containing per-user JSON battery files.
+TRUST_BATTERY_DIR = os.environ.get("TRUST_BATTERY_DIR", "")
+
 MAX_SLACK_MSG_LEN = 3900
 PORT = int(os.environ.get("PORT", "3000"))
 
@@ -239,7 +266,7 @@ def _get_session(thread_ts: str) -> str | None:
 # The CLI queues them automatically, matching terminal behavior.
 # ---------------------------------------------------------------------------
 
-IDLE_TIMEOUT = 1800  # 30 minutes — kill process if no messages
+IDLE_TIMEOUT = 10800  # 3 hours — kill process if no messages
 MAX_LIVE_SESSIONS = 5  # max concurrent Claude processes (memory guard)
 
 
@@ -266,19 +293,69 @@ _live_sessions: dict[str, LiveSession] = {}
 _live_sessions_lock = threading.Lock()
 
 
+def _get_trust_battery_context() -> str:
+    """Read trust battery JSON files and format a context summary for Claude.
+
+    Returns an empty string if trust batteries are not configured or no files exist.
+    """
+    if not TRUST_BATTERY_DIR:
+        return ""
+    battery_dir = Path(TRUST_BATTERY_DIR)
+    if not battery_dir.exists():
+        return ""
+    tiers = [
+        (0, 25, "Propose and Wait"),
+        (25, 50, "Routine Execution"),
+        (50, 75, "Judgment Calls"),
+        (75, 100, "Full Autonomy"),
+    ]
+    lines = ["## Trust Battery — Current State"]
+    for fpath in sorted(battery_dir.glob("*.json")):
+        try:
+            data = json.loads(fpath.read_text())
+            name = data.get("team_member", fpath.stem)
+            charge = data.get("current_charge", 0)
+            last_updated = data.get("last_updated", "unknown")
+            last_delta = 0.0
+            if data.get("history"):
+                last_delta = data["history"][-1].get("delta", 0.0)
+            tier = next((t for lo, hi, t in tiers if lo <= charge < hi), "Full Autonomy")
+            sign = "+" if last_delta >= 0 else ""
+            lines.append(f"- {name}: {charge:.1f}% ({tier}) | Last: {sign}{last_delta:.1f} on {last_updated}")
+        except Exception:
+            continue
+    if len(lines) == 1:
+        return ""
+    lines.append("")
+    lines.append("Your autonomy level is determined by the battery charge for the")
+    lines.append("team member you're interacting with:")
+    lines.append("  0-25%  = Propose and Wait")
+    lines.append("  25-50% = Routine Execution")
+    lines.append("  50-75% = Judgment Calls")
+    lines.append("  75-100% = Full Autonomy")
+    return "\n".join(lines)
+
+
 def _spawn_claude_process(session_id: str | None = None, user_id: str = "") -> subprocess.Popen:
     """Spawn a long-lived Claude CLI process with stream-json I/O."""
+    battery_context = _get_trust_battery_context()
     cmd = [
         "claude",
-        "-p", "",
+        "-p", battery_context,
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
         "--model", "claude-opus-4-6[1m]",
         "--effort", "medium",
     ]
-    if user_id in RING_1_USERS:
+    if user_id in SUPERVISOR_USERS:
         cmd.extend(["--permission-mode", "bypassPermissions"])
+    elif user_id in RESTRICTED_USERS:
+        cmd.extend(["--permission-mode", "dontAsk"])
+        if RESTRICTED_ALLOWED_TOOLS:
+            cmd.extend(["--allowedTools", " ".join(RESTRICTED_ALLOWED_TOOLS)])
+        if RESTRICTED_DISALLOWED_TOOLS:
+            cmd.extend(["--disallowedTools", " ".join(RESTRICTED_DISALLOWED_TOOLS)])
     else:
         cmd.extend(["--permission-mode", "dontAsk"])
     if session_id:
@@ -296,7 +373,7 @@ def _spawn_claude_process(session_id: str | None = None, user_id: str = "") -> s
         text=True,
         cwd=PROJECT_DIR,
     )
-    perm_mode = "bypassPermissions" if user_id in RING_1_USERS else "dontAsk"
+    perm_mode = "bypassPermissions" if user_id in SUPERVISOR_USERS else "dontAsk"
     logger.info(f"Spawned Claude process pid={proc.pid} (resume={session_id or 'none'}, user={user_id}, permissions={perm_mode})")
     return proc
 
@@ -716,8 +793,12 @@ def process_message_async(event: dict) -> None:
     channel = event.get("channel", "")
     thread_ts = event.get("thread_ts") or event.get("ts")
 
-    # Strip bot mention
-    text = re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
+    # Replace user mentions with readable names
+    text = re.sub(
+        r"<@([A-Z0-9]+)>",
+        lambda m: f"@{_get_user_name(m.group(1))}",
+        text,
+    ).strip()
 
     # Download attachments
     attached_files = download_slack_files(event)
@@ -749,6 +830,11 @@ def process_message_async(event: dict) -> None:
         thread_context = _fetch_thread_context(channel, thread_ts, msg_ts)
 
     is_public_channel = event.get("channel_type") == "channel"
+    if is_public_channel and ALLOWED_CHANNEL_PREFIXES:
+        if not _get_channel_name(channel).startswith(ALLOWED_CHANNEL_PREFIXES):
+            logger.info(f"Ignoring message in non-allowed public channel {channel} ({_get_channel_name(channel)})")
+            return
+
     if is_public_channel and not has_existing_session and not has_live_process:
         channel_name = _get_channel_name(channel)
         prefix = (
@@ -901,6 +987,14 @@ def handle_message(event, say):
 def handle_mention(event, say):
     """Handle @bot mentions in channels."""
     user_id = event.get("user", "")
+    channel = event.get("channel", "")
+
+    is_public_channel = event.get("channel_type") == "channel"
+    if is_public_channel and ALLOWED_CHANNEL_PREFIXES:
+        if not _get_channel_name(channel).startswith(ALLOWED_CHANNEL_PREFIXES):
+            logger.info(f"Ignoring mention in non-allowed public channel {channel}")
+            return
+
     if not is_authorized(user_id):
         # In DMs, block. In channels, let through (Claude respects info boundaries).
         if event.get("channel_type") in ("im", "mpim"):
