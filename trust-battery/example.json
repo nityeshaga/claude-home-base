@@ -1,0 +1,18 @@
+{
+  "team_member": "Alice",
+  "slack_id": "U0XXXXXXXXX",
+  "current_charge": 50.0,
+  "last_updated": "2025-01-01",
+  "last_interaction_date": null,
+  "history": [
+    {
+      "date": "2025-01-01",
+      "charge_before": 50.0,
+      "charge_after": 50.0,
+      "delta": 0.0,
+      "decay_applied": false,
+      "interaction_detected": false,
+      "reasoning": []
+    }
+  ]
+}
