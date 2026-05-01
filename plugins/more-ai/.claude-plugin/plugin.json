@@ -1,7 +1,7 @@
 {
   "name": "more-ai",
-  "description": "Other AI models for tasks they excel at — Gemini image generation and Gemini thinking.",
-  "version": "1.1.0",
+  "description": "Other AI models for tasks they excel at — Gemini image generation, OpenAI image generation, and Gemini thinking.",
+  "version": "1.2.0",
   "author": {
     "name": "Claude Home Base"
   }
