@@ -12,8 +12,8 @@
     {
       "name": "more-ai",
       "source": "./plugins/more-ai",
-      "description": "Other AI models for tasks they excel at \u2014 Gemini image generation and Gemini thinking.",
-      "version": "1.0.0"
+      "description": "Other AI models for tasks they excel at \u2014 Gemini image generation, OpenAI image generation, and Gemini thinking.",
+      "version": "1.2.0"
     },
     {
       "name": "tactical",
