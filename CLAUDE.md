@@ -8,7 +8,7 @@ The generalized, open-source version of CC Home Base (Luo Ji's installation). Th
 - `bot.py` — generic Slack bot (Flask + HTTP Events API)
 - `CLAUDE.md.example` — template operations manual
 - `identity.md` / `about-you-and-how-you-came-to-life.md` — identity templates
-- `plugins/` — marketplace of skills (tactical, more-ai, etc.)
+- `plugins/` — marketplace of skills (coding, creative, more-ai, experimental)
 - `search/` — hybrid keyword + vector search over local files and conversation history
 - `index.html` — setup guide hosted at nityeshaga.github.io/claude-home-base
 

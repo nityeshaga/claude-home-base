@@ -10,22 +10,28 @@
   },
   "plugins": [
     {
+      "name": "coding",
+      "source": "./plugins/coding",
+      "description": "Precision coding tools \u2014 pixel-perfect UI implementation from designs, with visual verification and independent review loops.",
+      "version": "1.0.0"
+    },
+    {
+      "name": "creative",
+      "source": "./plugins/creative",
+      "description": "Creative direction, collaborative writing, brainstorming, and discovery interviews \u2014 for projects where thinking, story, and voice matter more than code.",
+      "version": "1.1.0"
+    },
+    {
       "name": "more-ai",
       "source": "./plugins/more-ai",
       "description": "Other AI models for tasks they excel at \u2014 Gemini image generation, OpenAI image generation, and Gemini thinking.",
       "version": "1.2.0"
     },
     {
-      "name": "tactical",
-      "source": "./plugins/tactical",
-      "description": "Structured workflows for thinking, creativity, decision-making, and operational work \u2014 briefing (email, briefs, action tracking), brainstorming sessions, prompt engineering.",
-      "version": "2.3.1"
-    },
-    {
-      "name": "creative",
-      "source": "./plugins/creative",
-      "description": "Creative direction and pixel-perfect UI implementation \u2014 websites, apps, products, brands, dashboards, tools. Acts as a creative director who thinks through purpose, story, and feeling before any implementation, and as a precision UI engineer who builds designs with zero visual deviation.",
-      "version": "1.0.2"
+      "name": "experimental",
+      "source": "./plugins/experimental",
+      "description": "Experimental workflows \u2014 email briefing, blind debiasing, prompt engineering, and forensic self-investigation.",
+      "version": "3.0.0"
     }
   ]
 }

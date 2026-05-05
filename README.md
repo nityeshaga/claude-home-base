@@ -8,7 +8,7 @@ A complete setup for turning a spare Mac (Mini, MacBook Air, whatever) into a de
 
 - **Slack bot** that wraps Claude Code's CLI — DM it or @mention it in channels
 - **Cloudflare Tunnel** for production-grade Slack integration (HTTP Events API, not Socket Mode)
-- **Plugin marketplace** with skills for inbox management, brainstorming, image generation
+- **Plugin marketplace** with skills for creative direction, coding, image generation, brainstorming, and more
 - **Identity system** — your AI writes its own personality, keeps a diary, compounds over time
 - **Setup guide** — step-by-step, with dark mode, interactive checklists, and concept explainers
 
@@ -38,14 +38,26 @@ about-you-and-how-you-came-to-life.md  # Origin story template
 requirements.txt        # Python dependencies
 
 plugins/
-├── tactical/           # Chief of staff, brainstorming, decision-making
+├── coding/             # Precision coding tools
 │   └── skills/
-│       ├── chief-of-staff/  # Executive assistant — email, briefs, action tracking
-│       └── lets-brainstorm/ # Timed coaching sessions
-└── more-ai/            # Gemini image generation, thinking
+│       └── make-precise-ui/  # Pixel-perfect UI from Figma designs
+├── creative/           # Creative direction, writing, brainstorming
+│   └── skills/
+│       ├── creative-lead/    # Creative direction for any project
+│       ├── lets-brainstorm/  # Timed coaching sessions
+│       ├── help-me-write/    # Collaborative writing (keeps your voice)
+│       └── interview-me/     # Timed discovery interviews
+├── more-ai/            # Gemini and OpenAI image generation, thinking
+│   └── skills/
+│       ├── gemini-imagegen/
+│       ├── openai-imagegen/
+│       └── gemini-thinking/
+└── experimental/       # Operational workflows, debiasing, prompt engineering
     └── skills/
-        ├── gemini-imagegen/
-        └── gemini-thinking/
+        ├── briefing/         # Email, briefs, action tracking
+        ├── are-you-sure/     # Blind debiasing for claims and opinions
+        ├── prompt-engineer/  # AI prompt writing and review
+        └── investigate-yourself/  # Forensic self-diagnosis
 ```
 
 ## Architecture

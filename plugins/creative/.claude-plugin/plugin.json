@@ -1,7 +1,7 @@
 {
   "name": "creative",
-  "description": "Creative direction and pixel-perfect UI implementation \u2014 websites, apps, products, brands, dashboards, tools. Acts as a creative director who thinks through purpose, story, and feeling before any implementation, and as a precision UI engineer who builds designs with zero visual deviation.",
-  "version": "1.0.2",
+  "description": "Creative direction, collaborative writing, brainstorming, and discovery interviews \u2014 for projects where thinking, story, and voice matter more than code.",
+  "version": "1.1.0",
   "author": {
     "name": "Claude Home Base"
   }

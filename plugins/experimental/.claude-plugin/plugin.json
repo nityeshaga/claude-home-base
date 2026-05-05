@@ -1,0 +1,8 @@
+{
+  "name": "experimental",
+  "description": "Experimental workflows — email briefing, blind debiasing, prompt engineering, and forensic self-investigation.",
+  "version": "3.0.0",
+  "author": {
+    "name": "Claude Home Base"
+  }
+}
