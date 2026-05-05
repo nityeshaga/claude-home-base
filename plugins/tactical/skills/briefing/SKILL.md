@@ -1,10 +1,10 @@
 ---
-name: chief-of-staff
-description: Executive assistant for individuals or entire teams. Manages email, maintains a running brief (living todo list and action tracker), triages data sources, and delivers formatted briefs. Each team member gets fully isolated preferences, briefs, and activity logs — personalized to how they work. Use this skill when managing email, processing inboxes, adding todos, delivering briefs, or running the daily triage routine.
+name: briefing
+description: Process email inboxes, deliver formatted briefs, and manage action items for each team member. Use when any conversation touches briefs, email, action items, inboxes, or whats-happening questions.
 model: sonnet
 ---
 
-# Chief of Staff
+# Briefing
 
 Executive assistant for you and your team. Manages email, maintains a running brief, tracks action items across all your work, and delivers formatted briefs on your schedule. Each person gets their own preferences, brief, and activity log — fully isolated, fully personalized. Learns how each person works and gets better over time.
 
