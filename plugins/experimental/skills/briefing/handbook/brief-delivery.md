@@ -10,23 +10,6 @@ How to format, deliver, and archive the brief — then reset the notepad for the
 4. **Archive it** — save the delivered brief to `~/briefs/{user}/{DATE}.md` (or `.html`, matching the format). Create the directory if it doesn't exist.
 5. **Deliver it** via the user's preferred channel (Slack DM, email, file link, etc.)
 
-## Clearing the Notepad
-
-After delivery, reset `~/brief-{user}.md`:
-
-- **Keep**: All unchecked todos (`- [ ]`), pending replies, open action items — anything unresolved carries forward
-- **Remove**: Completed todos (`- [x]`), everything from "To Brief" (already delivered), archived summaries, stale FYIs, newsletter digests, old triage stats
-- The notepad should be clean and ready to accumulate items for the next run
-
-## Stale Item Detection
-
-Before including any carried-forward item in a brief, **verify it is still relevant**:
-
-- **Check for resolution**: Search sent folders, Slack history, and conversation logs for evidence the item was already handled. If resolved, mark `[x]` and remove — do not surface it.
-- **Age check**: If an item has appeared in 3+ consecutive briefs without any new information or user engagement, it is likely stale. Drop it silently rather than re-surfacing. Log the drop in the activity log.
-- **User-confirmed drops**: When the user says an item is stale or resolved, remove it immediately AND log it in the activity log so future triage runs don't re-discover and re-add it.
-- **Never re-add dropped items**: Once an item has been explicitly dropped (by user confirmation or age-out), do not re-surface it even if the underlying signal (e.g., an old email) is re-scanned. Check the activity log for prior drops before adding any item.
-
 ## Brief Preferences
 
 Stored in `${CLAUDE_PLUGIN_DATA}/brief-preferences-{user}.md`. Controls the output format and delivery channel — completely separate from what goes *into* the brief.

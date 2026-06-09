@@ -31,7 +31,7 @@
       "name": "experimental",
       "source": "./plugins/experimental",
       "description": "Experimental workflows \u2014 email briefing, blind debiasing, prompt engineering, and forensic self-investigation.",
-      "version": "3.1.0"
+      "version": "3.2.0"
     }
   ]
 }

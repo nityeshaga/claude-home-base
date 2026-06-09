@@ -14,6 +14,7 @@ The handbook contains the detailed playbooks for each data source and process. *
 
 | Chapter | Path | Read When |
 |---------|------|-----------|
+| **Notepad** | `handbook/notepad.md` | ALWAYS — before reading or writing any notepad |
 | **Email** | `handbook/email.md` | ALWAYS — before processing any email |
 | **Slack** | `handbook/slack.md` | ALWAYS — before reviewing Slack activity |
 | **Brief Delivery** | `handbook/brief-delivery.md` | ALWAYS — before delivering a brief |
@@ -68,69 +69,7 @@ This skill manages multiple users. Each user has their own preferences, portrait
 
 ## The Brief System
 
-The brief is the core of the executive assistant workflow. It's a persistent notepad per user that lives at `~/brief-{user}.md`. Think of it as the chief of staff's working document — always open on their desk, always being updated.
-
-### How It Works
-
-```
-Data sources (email, Slack, conversation logs, user requests)
-    │
-    ▼
-~/brief-{user}.md  ← The Notepad (always exists, always writable)
-    │                  Accumulates: todos, action items, things to brief
-    │                  Between runs: user or other skills can add todos here
-    │
-    │  ← Triage run happens
-    │     1. Read the notepad
-    │     2. Process data sources (email, Slack, etc.)
-    │     3. Add new findings to the notepad
-    │     4. Snapshot the notepad → format per user preferences → deliver
-    │     5. Clear the notepad — keep only open todos and actionable items
-    │
-    ▼
-~/briefs/{user}/{DATE}.md  ← Archive of delivered brief
-```
-
-### The Notepad: `~/brief-{user}.md`
-
-This file is the single source of truth for what needs to be briefed to the user. It has a loose structure with guided sections. You can add, remove, or rename sections based on the user's needs — but these core sections should always be present:
-
-```markdown
-# Brief — {User}
-
-## Action Items
-Items the user needs to act on. Subcategorize by what you can handle vs what needs them:
-
-### Can Be Handled By Assistant
-- [ ] Reply to vendor@example.com confirming the Thursday meeting (draft ready)
-- [ ] Unsubscribe from 3 newsletters flagged last week
-
-### Needs Human
-- [ ] investor@example.com — "Series A follow-up" — they're asking for a decision
-- [ ] Review the contract PDF from legal@firm.com
-
-## Pending Replies
-Emails (or messages from other sources) that expect a response but haven't gotten one:
-- **client@example.com** — "Re: Onboarding timeline" — waiting since Mar 28
-- **teammate@company.com** — asked about the API deadline in Slack #engineering
-
-## To Brief
-Items gathered since the last delivery that the user needs to know about:
-- New email from CEO about Q2 priorities
-- 3 GitHub notifications on the auth PR (2 approvals, 1 change request)
-- Slack: @designer mentioned you in #product about the landing page mockups
-
-## Notes
-Freeform section for anything that doesn't fit above — context, reminders, observations:
-- User mentioned they're traveling next week — may want to set up auto-replies
-- The weekly team sync moved to Wednesdays starting next month
-```
-
-**Key principles:**
-- This is a working document, not a polished deliverable. Keep it clean but functional.
-- Todos use checkbox syntax: `- [ ]` for open, `- [x]` for done.
-- When items are added between runs (e.g., user says "add X to my todos"), just append to the appropriate section.
-- The notepad is always the truth. The delivered brief is a formatted snapshot of it.
+The notepad (`~/brief-{user}.md`) is the persistent working document per user. Its structure, item format, and lifecycle are defined in **`handbook/notepad.md`** — read it before reading or writing any notepad. The one rule that travels everywhere: **every item that carries between briefs records its own one-line done-check (`verify:`) at capture time.**
 
 ---
 
@@ -159,42 +98,15 @@ Preferences compound. Every correction makes you better. Every new instruction f
 
 ## The Triage Flow
 
-This is the main routine. It processes data sources, updates the notepad, delivers the brief, and resets for next time.
+Triage runs are orchestrated by a workflow, not freeform — verification is a pipeline stage every notepad item must pass through before it can appear in a brief, not an instruction to remember.
 
-### Step 1: Read the Notepad
+Invoke the Workflow tool with:
+- scriptPath: `${CLAUDE_PLUGIN_ROOT}/workflows/briefing-triage.js`
+- args: `{ "user": "<piyush|nityesh>", "skillRoot": "${CLAUDE_PLUGIN_ROOT}/skills/briefing", "dataDir": "${CLAUDE_PLUGIN_DATA}", "date": "<today, YYYY-MM-DD>" }`
 
-Read `~/brief-{user}.md`. Understand what's currently tracked — open todos, pending replies, items queued for briefing. This is your starting context.
+The workflow: parse notepad → verify every item against its `verify:` predicate (one checker per item) → gather email/Slack/conversation-log intel in parallel → compose, deliver, reset the notepad, log. Items verified as resolved never reach the composer.
 
-### Step 2: Gather Intelligence
-
-Launch parallel work to understand what happened since the last run:
-
-- **Email**: **READ `handbook/email.md`** and run its triage process. This handles fetching unread mail, applying rules, archiving, drafting replies, and identifying items for the notepad.
-- **Slack**: **READ `handbook/slack.md`** and run its triage process. This launches subagents to review mentions, DMs, active threads, and promises made.
-- **Conversation logs**: Read recent Claude Code conversation logs (`~/.claude/projects/*/`) to understand what work was done, what decisions were made, what tasks were started or completed since the last run.
-
-Cross-reference findings against the notepad. Mark todos as done if evidence shows they were completed. Surface new obligations or loose ends discovered from any source.
-
-### Step 3: Update the Notepad
-
-Write all findings back to `~/brief-{user}.md`:
-- New action items discovered from email, Slack, conversation logs, or other sources
-- Updated status on existing items (mark done if evidence found)
-- New pending replies
-- Items to brief the user on
-- Any notes or context worth capturing
-
-### Step 4: Deliver the Brief
-
-**READ `handbook/brief-delivery.md`** and follow its process. This handles formatting, archiving, delivery, and clearing the notepad.
-
-### Step 5: Log Everything
-
-Append a dated section to `${CLAUDE_PLUGIN_DATA}/inbox-log-{user}.md` with every action taken and why.
-
-### Step 6: Update Preferences
-
-When you made a judgment call on something new during this run, consider adding it as a rule in the appropriate preferences file.
+After the workflow returns, sanity-check its result (`delivered: true`, counts look plausible). If it failed or delivered nothing, tell the user on Slack what broke — never fail silently.
 
 ---
 
@@ -203,7 +115,7 @@ When you made a judgment call on something new during this run, consider adding 
 The notepad (`~/brief-{user}.md`) is always available for writes between triage runs. When a user says "add X to my todos" or another skill/routine needs to queue something:
 
 1. Read `~/brief-{user}.md`
-2. Append the item to the appropriate section (usually "Action Items" → "Needs Human")
+2. Append the item to the appropriate section (usually "Action Items" → "Needs Human") with `verify:` and `added:` lines per `handbook/notepad.md`
 3. Write the file back
 
 This is how the executive assistant stays useful throughout the day — not just during triage runs.
