@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.daily-diary</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOUR_USERNAME/scripts/daily-diary.sh</string>
+    </array>
+    <!-- Always set WorkingDirectory to your home dir, or launchd defaults to /
+         and Claude Code spins up a split-brain project with separate memory. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USERNAME</string>
+    <!-- Times are LOCAL. 3:30 AM keeps it off-peak. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/scripts/diary-launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/scripts/diary-launchd-stderr.log</string>
+</dict>
+</plist>
