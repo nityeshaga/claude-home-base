@@ -403,6 +403,8 @@ class LiveSession:
     _on_text: callable = field(default=None, repr=False)
     # Event that signals when a turn (result) is complete
     _turn_done: threading.Event = field(default_factory=threading.Event)
+    # Highest 100k context threshold already announced in the thread
+    ctx_notified_level: int = 0
 
 
 # thread_ts → LiveSession
@@ -570,6 +572,46 @@ def _spawn_claude_process(
     return proc
 
 
+# Announce context utilization in the thread every N tokens (bot-side only —
+# the notice never enters Claude's context)
+CTX_NOTIFY_STEP = 100_000
+CTX_WINDOW = 1_000_000
+
+
+def _post_context_notice(session: LiveSession, ctx: int) -> None:
+    """Post a small grey context-block notice about context utilization."""
+    try:
+        note = f"context window: ~{ctx / 1000:.0f}k of {CTX_WINDOW // 1000}k tokens ({ctx / CTX_WINDOW:.0%})"
+        slack_client.chat_postMessage(
+            channel=session.channel, thread_ts=session.thread_ts,
+            text=note,
+            blocks=[{"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f":brain: _{note}_"}]}],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to post context notice: {e}")
+
+
+def _track_context(session: LiveSession, data: dict) -> None:
+    """Watch usage on assistant events; announce each new 100k threshold.
+
+    Context shrinks when the CLI compacts the conversation — re-arm the
+    thresholds then, so utilization gets re-announced on the way back up.
+    """
+    usage = data.get("message", {}).get("usage") or {}
+    ctx = (usage.get("input_tokens", 0)
+           + usage.get("cache_read_input_tokens", 0)
+           + usage.get("cache_creation_input_tokens", 0))
+    if not ctx:
+        return
+    level = ctx // CTX_NOTIFY_STEP
+    if level > session.ctx_notified_level:
+        session.ctx_notified_level = level
+        _post_context_notice(session, ctx)
+    elif level < session.ctx_notified_level:
+        session.ctx_notified_level = level
+
+
 def _reader_loop(session: LiveSession) -> None:
     """Read stdout from a live Claude process and post responses to Slack.
 
@@ -593,6 +635,7 @@ def _reader_loop(session: LiveSession) -> None:
                     session.session_id = sid
 
             elif msg_type == "assistant":
+                _track_context(session, data)
                 content = data.get("message", {}).get("content", [])
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "text":
