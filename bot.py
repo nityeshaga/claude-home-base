@@ -765,6 +765,43 @@ def chunk_message(text: str) -> list:
     return chunks
 
 
+# A GFM table separator row, e.g. "|---|:---:|" — the signal that a chunk
+# contains a markdown table and should go out as a native markdown block.
+_MD_TABLE_SEP = re.compile(
+    r"^ {0,3}\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def post_response(channel: str, message: str, thread_ts: str | None = None) -> str | None:
+    """Post a markdown response to Slack, chunked.
+
+    Chunks containing a markdown table are sent as a native `markdown` block
+    (Slack renders GFM tables, task lists, headers natively); everything else
+    goes as plain mrkdwn text via md_to_slack. Returns the effective thread_ts
+    (the first message's ts when not already in a thread).
+    """
+    parent_ts = thread_ts
+    for chunk in chunk_message(message):
+        fallback = md_to_slack(chunk)
+        result = None
+        if _MD_TABLE_SEP.search(chunk):
+            try:
+                result = slack_client.chat_postMessage(
+                    channel=channel, thread_ts=parent_ts, text=fallback,
+                    blocks=[{"type": "markdown", "text": chunk}],
+                )
+            except Exception as e:
+                logger.warning(f"markdown block post failed, using plain text: {e}")
+        if result is None:
+            result = slack_client.chat_postMessage(
+                channel=channel, thread_ts=parent_ts, text=fallback,
+            )
+        if parent_ts is None:
+            parent_ts = result["ts"]
+    return parent_ts
+
+
 # ---------------------------------------------------------------------------
 # Voting (Block Kit interactive buttons)
 # ---------------------------------------------------------------------------
@@ -1047,18 +1084,7 @@ def send_dm(
     response = slack_client.conversations_open(users=[user_id])
     channel_id = response["channel"]["id"]
 
-    slack_text = md_to_slack(message)
-    chunks = chunk_message(slack_text)
-
-    parent_ts = thread_ts
-    for chunk in chunks:
-        result = slack_client.chat_postMessage(
-            channel=channel_id, text=chunk, thread_ts=parent_ts,
-        )
-        if parent_ts is None:
-            parent_ts = result["ts"]
-
-    effective_thread_ts = thread_ts or parent_ts
+    effective_thread_ts = post_response(channel_id, message, thread_ts=thread_ts)
 
     # Auto-upload any file paths mentioned in the message
     _auto_upload_files(message, channel_id, thread_ts=effective_thread_ts)
@@ -1109,18 +1135,7 @@ def send_to_channel(
     thread_ts: str | None = None,
 ) -> str | None:
     """Post a message to a channel (optionally in a thread). Returns thread_ts."""
-    slack_text = md_to_slack(message)
-    chunks = chunk_message(slack_text)
-
-    parent_ts = thread_ts
-    for chunk in chunks:
-        result = slack_client.chat_postMessage(
-            channel=channel, text=chunk, thread_ts=parent_ts,
-        )
-        if parent_ts is None:
-            parent_ts = result["ts"]
-
-    effective_thread_ts = thread_ts or parent_ts
+    effective_thread_ts = post_response(channel, message, thread_ts=thread_ts)
 
     # Auto-upload any file paths mentioned in the message
     _auto_upload_files(message, channel, thread_ts=effective_thread_ts)
@@ -1377,11 +1392,7 @@ def process_message_async(event: dict) -> None:
         _auto_upload_files(text_block, channel, thread_ts=thread_ts)
 
         # Post to Slack
-        slack_text = md_to_slack(text_block)
-        for chunk in chunk_message(slack_text):
-            slack_client.chat_postMessage(
-                channel=channel, text=chunk, thread_ts=thread_ts,
-            )
+        post_response(channel, text_block, thread_ts=thread_ts)
         first_text_sent = True
 
     start = time.time()
@@ -1545,6 +1556,57 @@ def handle_vote_pass(ack, body):
     user_id = body["user"]["id"]
     vote_key = body["actions"][0]["value"]
     threading.Thread(target=_handle_vote, args=("vote_pass", vote_key, user_id), daemon=True).start()
+
+
+# Registered after the vote handlers — Bolt dispatches to the first matching
+# listener, so vote_* clicks never reach this catch-all.
+@app.action(re.compile(r"^(?!vote_).*"))
+def handle_block_action(ack, body):
+    """Route button clicks / menu selections into the thread's Claude session.
+
+    Any interactive element the bot (or Claude via the SDK) posts lands here.
+    The click becomes a structured message in the same thread, so Claude sees
+    '[Name clicked "Send it"]' and responds there. URL buttons are
+    navigational — ack only.
+    """
+    ack()
+    try:
+        action = body["actions"][0]
+        if action.get("url"):
+            return
+
+        user_id = body["user"]["id"]
+        if not is_authorized(user_id):
+            log_unauthorized(body)
+            return
+
+        label = action.get("text", {}).get("text", "")
+        value = action.get("value", "")
+        if action.get("type") == "static_select":
+            opt = action.get("selected_option", {})
+            label = opt.get("text", {}).get("text", label)
+            value = opt.get("value", value)
+        desc = f'"{label}"' if label else f"action {action.get('action_id', '?')}"
+        if value and value != label:
+            desc += f" (value: {value})"
+
+        message = body["message"]
+        event = {
+            "user": user_id,
+            "channel": body["channel"]["id"],
+            "ts": message["ts"],  # :eyes: lands on the clicked message
+            "thread_ts": message.get("thread_ts") or message["ts"],
+            # "Andy" in the text keeps this from being SKIPped by the
+            # channel-relevance filter when the click starts a fresh session
+            "text": f"[Button click for Andy: {_get_user_name(user_id)} clicked {desc} "
+                    f"(action_id: {action.get('action_id', '')})]",
+            # unique per click so repeat clicks on one message aren't deduped
+            "client_msg_id": f"{action.get('action_id', '')}:{action.get('action_ts', '')}",
+            "channel_type": body["channel"].get("name") == "directmessage" and "im" or "channel",
+        }
+        threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
+    except Exception as e:
+        logger.error(f"Failed to route block action: {e}")
 
 
 # ---------------------------------------------------------------------------

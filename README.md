@@ -79,6 +79,8 @@ You (anywhere) → Slack → Cloudflare Tunnel → Your Mac → Claude Code CLI
 - **File handling** — downloads attachments, auto-uploads files mentioned in responses
 - **Proactive messaging** — send DMs, post to channels, reply in threads via CLI
 - **Streaming output** — real-time responses as Claude generates
+- **Native tables** — markdown tables in responses render as real Slack tables (Block Kit `markdown` block)
+- **Interactive buttons** — button clicks and menu picks route back into the thread's Claude session as messages, so your AI can offer approve/hold/snooze choices and act on the answer (requires Interactivity enabled in your Slack app config; Request URL = the same `/slack/events` endpoint)
 
 ## License
 
