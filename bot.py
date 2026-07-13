@@ -598,6 +598,11 @@ def _track_context(session: LiveSession, data: dict) -> None:
     Context shrinks when the CLI compacts the conversation — re-arm the
     thresholds then, so utilization gets re-announced on the way back up.
     """
+    # Subagent (Task) events stream through the same stdout with the
+    # subagent's own, much smaller context — counting them re-arms the
+    # threshold and re-fires the alert every turn. Main-loop events only.
+    if data.get("parent_tool_use_id"):
+        return
     usage = data.get("message", {}).get("usage") or {}
     ctx = (usage.get("input_tokens", 0)
            + usage.get("cache_read_input_tokens", 0)
