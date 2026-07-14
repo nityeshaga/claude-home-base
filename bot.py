@@ -1628,12 +1628,25 @@ def handle_block_action(ack, body):
             log_unauthorized(body)
             return
 
+        atype = action.get("type", "")
         label = action.get("text", {}).get("text", "")
         value = action.get("value", "")
-        if action.get("type") == "static_select":
-            opt = action.get("selected_option", {})
+        if atype in ("static_select", "radio_buttons"):
+            opt = action.get("selected_option") or {}
             label = opt.get("text", {}).get("text", label)
             value = opt.get("value", value)
+        elif atype in ("checkboxes", "multi_static_select"):
+            opts = action.get("selected_options") or []
+            value = ", ".join(o.get("text", {}).get("text") or o.get("value", "") for o in opts)
+            label = label or "selection"
+        elif atype == "datepicker":
+            value = action.get("selected_date") or ""
+            label = label or "date"
+        elif atype == "timepicker":
+            value = action.get("selected_time") or ""
+            label = label or "time"
+        elif atype == "plain_text_input":
+            label = label or "text input"
         desc = f'"{label}"' if label else f"action {action.get('action_id', '?')}"
         if value and value != label:
             desc += f" (value: {value})"
