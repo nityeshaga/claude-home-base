@@ -403,6 +403,10 @@ class LiveSession:
     _on_text: callable = field(default=None, repr=False)
     # Event that signals when a turn (result) is complete
     _turn_done: threading.Event = field(default_factory=threading.Event)
+    # Eyes reactions from mid-turn steering messages, removed by the reader
+    # loop when the absorbing turn's result arrives. CPython list append/pop
+    # are atomic, so no extra lock for this traffic.
+    pending_reactions: list = field(default_factory=list)
     # Highest 100k context threshold already announced in the thread
     ctx_notified_level: int = 0
 
@@ -648,6 +652,13 @@ def _reader_loop(session: LiveSession) -> None:
                 if sid:
                     session.session_id = sid
                     _save_session(session.thread_ts, sid)
+                # Clear eyes reactions from steering messages this turn absorbed
+                while session.pending_reactions:
+                    ch, ts = session.pending_reactions.pop(0)
+                    try:
+                        slack_client.reactions_remove(channel=ch, name="eyes", timestamp=ts)
+                    except Exception:
+                        pass
                 session._turn_done.set()
 
     except Exception as e:
@@ -1441,6 +1452,22 @@ def process_message_async(event: dict) -> None:
     start = time.time()
     try:
         session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
+
+        # Real-time steering: a turn is already running in this thread — don't
+        # hold the message until it finishes. Write it to stdin now; the CLI
+        # delivers it at the next tool-call boundary inside the running turn,
+        # exactly like typing without Esc in interactive Claude Code. The
+        # running turn's on_text posts to this same thread, so replies route
+        # correctly. If the turn ends in the race window the message simply
+        # starts the next turn, and its eyes reaction is still drained by the
+        # reader on that turn's result. `stop`/`esc` remains the hard
+        # interrupt for aborting a slow tool call outright.
+        if session.turn_lock.locked():
+            _send_to_claude(session, text)
+            session.pending_reactions.append((reaction_channel, reaction_msg_ts))
+            audit_interaction(event, "(steered into running turn)", 0.0, session.session_id)
+            logger.info(f"Steering message injected mid-turn in thread {thread_ts}")
+            return
 
         # Acquire turn_lock — this serializes the send→wait cycle.
         # If another message is already being processed, we block here.

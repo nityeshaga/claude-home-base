@@ -82,6 +82,7 @@ You (anywhere) → Slack → Cloudflare Tunnel → Your Mac → Claude Code CLI
 - **Native tables** — markdown tables in responses render as real Slack tables (Block Kit `markdown` block)
 - **Interactive buttons** — button clicks and menu picks route back into the thread's Claude session as messages, so your AI can offer approve/hold/snooze choices and act on the answer (requires Interactivity enabled in your Slack app config; Request URL = the same `/slack/events` endpoint)
 - **In-thread stop** — type a bare `stop` in a thread where the bot is mid-run to interrupt it (like Esc in the terminal); the session survives with full context, so your next message steers it in the new direction
+- **Mid-turn steering** — message a thread while the bot is mid-run and it sees your message at the next tool-call boundary, inside the same turn (like typing without Esc in the terminal); no more waiting for the whole task to finish before you can course-correct
 
 ## License
 
