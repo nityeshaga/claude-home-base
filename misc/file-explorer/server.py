@@ -20,6 +20,9 @@ import plistlib
 import subprocess
 import re
 import difflib
+import threading
+import tempfile
+import time
 from collections import OrderedDict
 from flask import Flask, Response, redirect, request, jsonify
 from pathlib import Path
@@ -747,7 +750,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DISPLAY_NAME_PLACEHOLDER</title>
+<meta name="theme-color" content="#1C1917">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2020%2020'%20fill='none'%20stroke='%23D4A574'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M10%205.2C8.4%204%206.2%203.5%203.5%203.5v10.3c2.7%200%204.9.5%206.5%201.7'/%3E%3Cpath%20d='M10%205.2c1.6-1.2%203.8-1.7%206.5-1.7v10.3c-2.7%200-4.9.5-6.5%201.7'/%3E%3Cpath%20d='M10%205.2v10.3'/%3E%3C/svg%3E">
+<title>PAGE_TITLE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,700;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -865,6 +870,34 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .listing tr:hover .icon { color: var(--accent); }
   .listing .size, .listing .date { color: var(--text-secondary); font-size: 12px; }
+
+  /* Directory filter + sort control row — kept quiet */
+  .listing-controls {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 0 12px 10px 12px; margin-bottom: 2px;
+  }
+  .listing-filter {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--text-primary); background: transparent;
+    border: 1px solid var(--border-subtle); border-radius: 4px;
+    padding: 5px 9px; width: 200px; outline: none;
+    transition: border-color 150ms ease;
+  }
+  .listing-filter::placeholder { color: var(--text-tertiary); }
+  .listing-filter:focus { border-color: var(--accent); }
+  .listing-sort { display: flex; align-items: center; gap: 12px; }
+  .sort-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text-tertiary); background: transparent;
+    border: none; padding: 0; cursor: pointer;
+    transition: color 150ms ease;
+  }
+  .sort-btn:hover { color: var(--text-secondary); }
+  .sort-btn.active { color: var(--accent); }
+  .listing-count {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text-tertiary); margin-left: 4px;
+  }
 
   /* File content */
   .file-content { padding: 24px 40px; flex: 1; }
@@ -1406,6 +1439,38 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     min-width: 56px; text-align: right; flex-shrink: 0;
   }
 
+  /* Source badge chips + noise filter */
+  .conv-badge {
+    font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+    letter-spacing: 0.02em; line-height: 1;
+    padding: 3px 7px; border-radius: 5px; flex-shrink: 0;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .conv-badge.kind-channel { background: rgba(212, 165, 116, 0.15); color: var(--accent); }
+  .conv-badge.kind-dm { background: rgba(134, 239, 172, 0.1); color: var(--status-green); }
+  .conv-badge.kind-scheduled { background: var(--bg-elevated); color: var(--text-tertiary); }
+  .conv-badge.kind-terminal { background: transparent; color: var(--text-secondary); border-color: var(--border); }
+
+  .conv-filter-bar {
+    display: flex; gap: 8px; align-items: center;
+    padding: 4px 0 14px;
+  }
+  .conv-filter-chip {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.03em; color: var(--text-tertiary);
+    padding: 5px 12px; border-radius: 6px; cursor: pointer;
+    background: transparent; border: 1px solid var(--border);
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  .conv-filter-chip:hover { color: var(--text-secondary); }
+  .conv-filter-chip.active {
+    background: rgba(212, 165, 116, 0.15); color: var(--accent);
+    border-color: rgba(212, 165, 116, 0.35);
+  }
+  /* Filter modes toggle row visibility via container class */
+  .conv-index.filter-conversations .conv-row[data-kind="scheduled"] { display: none; }
+  .conv-index.filter-scheduled .conv-row:not([data-kind="scheduled"]) { display: none; }
+
   /* Detail page */
   .conv-detail { max-width: 760px; margin: 0 auto; }
   .conv-detail-back {
@@ -1419,6 +1484,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
     display: flex; gap: 16px; flex-wrap: wrap;
   }
+
+  /* Live session indicator */
+  .conv-live-indicator {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--status-green);
+    text-transform: lowercase; letter-spacing: 0.5px;
+  }
+  .conv-live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--status-green);
+    animation: pulse 3s ease-in-out infinite;
+  }
+  .conv-live-indicator.ended { color: var(--text-tertiary); }
+  .conv-live-indicator.ended .conv-live-dot { background: var(--text-tertiary); animation: none; }
 
   /* Message blocks */
   .conv-message { margin-bottom: 0; padding: 0; }
@@ -1571,6 +1650,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .conv-load-more:hover { background: var(--bg-elevated); }
 
+  #conv-sentinel {
+    text-align: center; margin: 24px auto; min-height: 20px;
+  }
+  .conv-sentinel-label {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+  }
+
   /* Pagination — amber dots */
   .conv-pagination {
     display: flex; justify-content: center; gap: 10px; align-items: center;
@@ -1618,6 +1705,105 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .conv-slack-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--bg-elevated); }
   .conv-slack-btn svg { flex-shrink: 0; }
+
+  /* --- Cmd+K search palette --- */
+  #search-palette {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.5);
+  }
+  #search-palette.open { display: block; }
+  .search-box {
+    position: absolute; top: 15vh; left: 50%; transform: translateX(-50%);
+    width: 90%; max-width: 640px;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  #search-input {
+    width: 100%; border: none; outline: none;
+    background: transparent; color: var(--text-primary);
+    font-family: var(--font-mono); font-size: 15px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  #search-input::placeholder { color: var(--text-tertiary); }
+  #search-results {
+    list-style: none; max-height: 52vh; overflow-y: auto;
+    margin: 0; padding: 6px 0;
+  }
+  .search-result {
+    padding: 8px 18px; cursor: pointer;
+    border-left: 3px solid transparent;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .search-result.active {
+    border-left-color: var(--accent);
+    background: var(--bg-elevated);
+  }
+  .search-result .sr-name {
+    font-family: var(--font-mono); font-size: 14px;
+    color: var(--text-primary);
+  }
+  .search-result .sr-path {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .search-empty {
+    padding: 20px 18px; color: var(--text-tertiary);
+    font-family: var(--font-mono); font-size: 13px;
+  }
+
+  /* Navigation rails — conversation minimap & markdown TOC (desktop only, a quiet study aid) */
+  .nav-rail {
+    position: fixed; right: 16px; top: 80px;
+    max-height: calc(100vh - 120px); overflow-y: auto;
+    width: 200px; padding: 4px 0;
+    z-index: 50;
+  }
+  .nav-rail-item {
+    display: block; box-sizing: border-box; width: 100%;
+    font-family: var(--font-mono); font-size: 10px; line-height: 1.5;
+    color: var(--text-tertiary); text-align: left; background: none;
+    padding: 3px 8px; border-left: 2px solid transparent;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer; text-decoration: none;
+    transition: color 150ms ease, border-color 150ms ease;
+  }
+  .nav-rail-item:hover { color: var(--text-secondary); text-decoration: none; }
+  .nav-rail-item.active { color: var(--accent); border-left-color: var(--accent); }
+  @media (max-width: 1099px) { .nav-rail { display: none; } }
+
+  /* Keyboard navigation focus + shortcuts overlay */
+  .listing tr.kb-focus td { background: var(--bg-elevated); border-left-color: var(--accent); }
+  .listing tr.kb-focus .icon { color: var(--accent); }
+  .conv-row.kb-focus { background: var(--bg-elevated); box-shadow: inset 3px 0 0 var(--accent); }
+  .task-card.kb-focus { background: var(--bg-elevated); border-left-color: var(--accent); }
+  .kb-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(28, 25, 23, 0.72);
+  }
+  .kb-overlay.open { display: flex; }
+  .kb-overlay-panel {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 28px 32px; min-width: 380px; max-width: 90vw; max-height: 82vh; overflow-y: auto;
+  }
+  .kb-overlay-title {
+    font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-secondary);
+    margin: 0 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle);
+  }
+  .kb-overlay-grid {
+    display: grid; grid-template-columns: auto 1fr; gap: 10px 20px; align-items: baseline;
+  }
+  .kb-overlay-key {
+    font-family: var(--font-mono); font-size: 13px; color: var(--accent);
+    white-space: nowrap; text-align: right;
+  }
+  .kb-overlay-desc {
+    font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary);
+  }
 </style>
 </head>
 <body>
@@ -1630,6 +1816,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="main">
   <div class="breadcrumb">BREADCRUMB</div>
   CONTENT
+</div>
+<div id="search-palette">
+  <div class="search-box">
+    <input id="search-input" type="text" autocomplete="off" spellcheck="false"
+           placeholder="Jump to a file or folder...">
+    <ul id="search-results"></ul>
+  </div>
 </div>
 <script>
 // Sidebar toggle for mobile
@@ -1671,19 +1864,45 @@ if (editBtn) {
   const saveBtn = document.getElementById('btn-save');
   const cancelBtn = document.getElementById('btn-cancel');
   const status = document.getElementById('save-status');
+  const conflictWarning = document.getElementById('conflict-warning');
+  const overwriteBtn = document.getElementById('btn-overwrite');
+  const reloadBtn = document.getElementById('btn-reload');
   let cmEditor = null;
+  let dirty = false;       // unsaved changes in the editor
+  let editing = false;     // edit mode active
+  let expectedMtime = editBtn.dataset.mtime ? parseFloat(editBtn.dataset.mtime) : null;
 
-  function doSave() {
+  function setDirty(v) {
+    dirty = v;
+    if (v) conflictWarning.style.display = 'none';
+  }
+
+  // Warn before leaving with unsaved changes.
+  window.addEventListener('beforeunload', function(e) {
+    if (editing && dirty) {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
+
+  // force = re-POST without expected_mtime (overwrite anyway).
+  function doSave(force) {
     if (!cmEditor) return;
     const content = cmEditor.getValue();
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving...';
+    conflictWarning.style.display = 'none';
+    const body = {path: filePath, content: content};
+    if (!force && expectedMtime !== null) body.expected_mtime = expectedMtime;
     fetch('/save', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({path: filePath, content: content})
-    }).then(r => r.json()).then(result => {
+      body: JSON.stringify(body)
+    }).then(r => r.json().then(result => ({status: r.status, result}))).then(({status: httpStatus, result}) => {
       if (result.ok) {
+        if (typeof result.mtime === 'number') expectedMtime = result.mtime;
+        setDirty(false);
         status.textContent = 'Saved!';
         status.style.display = 'inline';
         status.style.color = 'var(--status-green)';
@@ -1695,15 +1914,20 @@ if (editBtn) {
           rendered.style.display = 'block';
           editBtn.style.display = 'inline-block';
           status.style.display = 'none';
+          editing = false;
         }, 800);
+      } else if (httpStatus === 409 || result.conflict) {
+        // Surface conflict inline in the edit bar (no browser alert).
+        if (typeof result.current_mtime === 'number') expectedMtime = result.current_mtime;
+        conflictWarning.style.display = 'inline-flex';
       } else {
         status.textContent = 'Error: ' + result.error;
-        status.style.color = '#f85149';
+        status.style.color = '#BF616A';
         status.style.display = 'inline';
       }
     }).catch(e => {
       status.textContent = 'Error: ' + e.message;
-      status.style.color = '#f85149';
+      status.style.color = '#BF616A';
       status.style.display = 'inline';
     }).finally(() => {
       saveBtn.disabled = false;
@@ -1715,6 +1939,9 @@ if (editBtn) {
     rendered.style.display = 'none';
     editArea.style.display = 'block';
     editBtn.style.display = 'none';
+    editing = true;
+    setDirty(false);
+    conflictWarning.style.display = 'none';
 
     if (!cmEditor) {
       cmEditor = CodeMirror(cmContainer, {
@@ -1728,25 +1955,508 @@ if (editBtn) {
         tabSize: 2,
         indentWithTabs: false,
         extraKeys: {
-          'Cmd-S': function() { doSave(); },
-          'Ctrl-S': function() { doSave(); },
+          'Cmd-S': function() { doSave(false); },
+          'Ctrl-S': function() { doSave(false); },
           'Enter': 'newlineAndIndentContinueMarkdownList',
         },
       });
+      cmEditor.on('change', () => { setDirty(true); });
     } else {
       cmEditor.setValue(rawEl.textContent);
+      setDirty(false);
     }
     setTimeout(() => { cmEditor.refresh(); cmEditor.focus(); }, 10);
   });
 
   cancelBtn.addEventListener('click', () => {
+    if (dirty && !confirm('Discard unsaved changes?')) return;
     editArea.style.display = 'none';
     rendered.style.display = 'block';
     editBtn.style.display = 'inline-block';
+    conflictWarning.style.display = 'none';
+    editing = false;
+    setDirty(false);
   });
 
-  saveBtn.addEventListener('click', doSave);
+  overwriteBtn.addEventListener('click', () => { doSave(true); });
+  reloadBtn.addEventListener('click', () => {
+    if (dirty && !confirm('Discard unsaved changes?')) return;
+    location.reload();
+  });
+
+  saveBtn.addEventListener('click', () => doSave(false));
 }
+
+// --- Directory listing: filter + sort ---
+(function() {
+  var controls = document.querySelector('.listing-controls');
+  var table = document.querySelector('.listing table');
+  if (!controls || !table) return;
+
+  var tbody = table.querySelector('tbody');
+  var input = controls.querySelector('.listing-filter');
+  var countEl = controls.querySelector('.listing-count');
+  var sortBtns = controls.querySelectorAll('.sort-btn');
+  var dirKey = controls.getAttribute('data-dirkey') || '';
+  var storeKey = 'fe-sort:' + dirKey;
+
+  var ARROW_UP = '↑', ARROW_DOWN = '↓';
+  var sortKey = 'name', sortDir = 1;  // 1 = asc, -1 = desc; default name ascending
+
+  function rows() { return Array.prototype.slice.call(tbody.querySelectorAll('tr')); }
+
+  function valFor(tr, key) {
+    if (key === 'size') return parseFloat(tr.getAttribute('data-size')) || 0;
+    if (key === 'modified') return parseFloat(tr.getAttribute('data-mtime')) || 0;
+    return (tr.getAttribute('data-name') || '').toLowerCase();
+  }
+
+  function applySort() {
+    var rs = rows();
+    rs.sort(function(a, b) {
+      // Dirs always grouped first
+      var ad = a.getAttribute('data-isdir') === '1' ? 0 : 1;
+      var bd = b.getAttribute('data-isdir') === '1' ? 0 : 1;
+      if (ad !== bd) return ad - bd;
+      var av = valFor(a, sortKey), bv = valFor(b, sortKey);
+      if (av < bv) return -1 * sortDir;
+      if (av > bv) return 1 * sortDir;
+      return 0;
+    });
+    rs.forEach(function(tr) { tbody.appendChild(tr); });
+    sortBtns.forEach(function(btn) {
+      var k = btn.getAttribute('data-key');
+      if (k === sortKey) {
+        btn.classList.add('active');
+        btn.textContent = k + ' ' + (sortDir === 1 ? ARROW_UP : ARROW_DOWN);
+      } else {
+        btn.classList.remove('active');
+        btn.textContent = k;
+      }
+    });
+  }
+
+  function applyFilter() {
+    var q = input.value.trim().toLowerCase();
+    var rs = rows(), shown = 0;
+    rs.forEach(function(tr) {
+      var name = (tr.getAttribute('data-name') || '').toLowerCase();
+      var match = !q || name.indexOf(q) !== -1;
+      tr.style.display = match ? '' : 'none';
+      if (match) shown++;
+    });
+    countEl.textContent = q ? (shown + ' of ' + rs.length) : '';
+  }
+
+  sortBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var k = btn.getAttribute('data-key');
+      if (k === sortKey) { sortDir = -sortDir; }
+      else { sortKey = k; sortDir = 1; }
+      try { localStorage.setItem(storeKey, JSON.stringify({ key: sortKey, dir: sortDir })); } catch (e) {}
+      applySort();
+    });
+  });
+
+  input.addEventListener('input', applyFilter);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') { input.value = ''; applyFilter(); input.blur(); }
+  });
+
+  // Restore last sort for this directory
+  try {
+    var saved = JSON.parse(localStorage.getItem(storeKey) || 'null');
+    if (saved && saved.key) { sortKey = saved.key; sortDir = saved.dir === -1 ? -1 : 1; }
+  } catch (e) {}
+
+  applySort();
+})();
+
+// --- Global keyboard navigation ---
+(function() {
+  var OVERLAY_ID = 'kb-shortcuts-overlay';
+  var HOME = 'HOME_BROWSE_PATH_PLACEHOLDER';
+
+  function isTyping(t) {
+    if (!t) return false;
+    var tag = (t.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+    if (t.isContentEditable) return true;
+    if (t.closest && t.closest('.CodeMirror')) return true;
+    return false;
+  }
+
+  function rows() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll('.listing tr, .conv-row, .task-card')
+    );
+  }
+
+  var idx = -1;
+
+  function clearFocus() {
+    var cur = document.querySelectorAll('.kb-focus');
+    for (var i = 0; i < cur.length; i++) cur[i].classList.remove('kb-focus');
+  }
+
+  function focusRow(i) {
+    var r = rows();
+    if (!r.length) return;
+    if (i < 0) i = 0;
+    if (i >= r.length) i = r.length - 1;
+    idx = i;
+    clearFocus();
+    var el = r[idx];
+    el.classList.add('kb-focus');
+    el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function move(delta) {
+    var r = rows();
+    if (!r.length) return;
+    if (idx < 0) { focusRow(delta > 0 ? 0 : r.length - 1); return; }
+    focusRow(idx + delta);
+  }
+
+  function openFocused() {
+    var r = rows();
+    if (idx < 0 || idx >= r.length) return;
+    var el = r[idx];
+    if (el.classList.contains('conv-row')) {
+      if (typeof el.onclick === 'function') el.onclick();
+      return;
+    }
+    if (el.classList.contains('task-card')) {
+      var a = el.closest('a');
+      if (a && a.href) window.location = a.href;
+      return;
+    }
+    var link = el.querySelector('.name a');
+    if (link && link.href) window.location = link.href;
+  }
+
+  function goUp() {
+    var p = location.pathname;
+    if (p.indexOf('/conversations/') === 0) { window.location = '/conversations'; return; }
+    if (p.indexOf('/tasks/') === 0) { window.location = '/tasks'; return; }
+    if (p.indexOf('/browse') === 0) {
+      var parts = p.replace(/\/+$/, '').split('/');
+      parts.pop();
+      var up = parts.join('/');
+      if (up.length < HOME.length) up = HOME;
+      window.location = up;
+    }
+  }
+
+  function overlay() { return document.getElementById(OVERLAY_ID); }
+
+  function buildOverlay() {
+    var el = overlay();
+    if (el) return el;
+    var binds = [
+      ['j / k', 'Move focus down / up'],
+      ['Enter', 'Open focused row'],
+      ['h / Backspace', 'Up a directory / back'],
+      ['g h', 'Go home'],
+      ['g t', 'Go to tasks'],
+      ['g c', 'Go to conversations'],
+      ['g d', 'Go to diary'],
+      ['?', 'Toggle this help'],
+      ['Esc', 'Close this help']
+    ];
+    var grid = '';
+    for (var i = 0; i < binds.length; i++) {
+      grid += '<div class="kb-overlay-key">' + binds[i][0] +
+              '</div><div class="kb-overlay-desc">' + binds[i][1] + '</div>';
+    }
+    el = document.createElement('div');
+    el.id = OVERLAY_ID;
+    el.className = 'kb-overlay';
+    el.innerHTML = '<div class="kb-overlay-panel">' +
+      '<p class="kb-overlay-title">Keyboard shortcuts</p>' +
+      '<div class="kb-overlay-grid">' + grid + '</div></div>';
+    el.addEventListener('click', function(e) { if (e.target === el) closeOverlay(); });
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function toggleOverlay() { buildOverlay().classList.toggle('open'); }
+  function closeOverlay() { var el = overlay(); if (el) el.classList.remove('open'); }
+  function overlayOpen() { var el = overlay(); return !!(el && el.classList.contains('open')); }
+
+  var gPending = false, gTimer = null;
+  function clearG() { gPending = false; if (gTimer) { clearTimeout(gTimer); gTimer = null; } }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isTyping(e.target)) return;
+
+    var k = e.key;
+
+    if (k === 'Escape') {
+      if (overlayOpen()) { e.preventDefault(); closeOverlay(); }
+      clearG();
+      return;
+    }
+
+    if (overlayOpen()) {
+      if (k === '?') { e.preventDefault(); closeOverlay(); }
+      return;
+    }
+
+    if (gPending) {
+      clearG();
+      if (k === 'h') { e.preventDefault(); window.location = HOME; return; }
+      if (k === 't') { e.preventDefault(); window.location = '/tasks'; return; }
+      if (k === 'c') { e.preventDefault(); window.location = '/conversations'; return; }
+      if (k === 'd') { e.preventDefault(); window.location = HOME + '/diary'; return; }
+      return;
+    }
+
+    if (k === 'g') { gPending = true; gTimer = setTimeout(clearG, 600); return; }
+    if (k === 'j') { e.preventDefault(); move(1); return; }
+    if (k === 'k') { e.preventDefault(); move(-1); return; }
+    if (k === 'Enter') { if (idx >= 0) { e.preventDefault(); openFocused(); } return; }
+    if (k === 'h' || k === 'Backspace') { e.preventDefault(); goUp(); return; }
+    if (k === '?') { e.preventDefault(); toggleOverlay(); return; }
+  });
+})();
+
+// --- Navigation rail: conversation minimap (right side, desktop) ---
+// Lists every real USER turn; scroll-spy highlights the topmost in view.
+// Built from the DOM and observes the container so late-appended turns join the rail.
+(function() {
+  var container = document.querySelector('.conv-detail');
+  if (!container) return;
+  var rail = null;
+  var entries = [];
+
+  function ensureRail() {
+    if (rail) return;
+    rail = document.createElement('nav');
+    rail.className = 'nav-rail';
+    rail.setAttribute('aria-label', 'Conversation minimap');
+    document.body.appendChild(rail);
+  }
+
+  function addEntry(msgEl) {
+    if (msgEl._railAdded) return;
+    if (msgEl.classList.contains('conv-meta-msg')) return;
+    var md = msgEl.querySelector('.conv-markdown');
+    var txt = md ? (md.textContent || '').trim() : '';
+    if (!txt) return; // skip tool-result-only turns
+    msgEl._railAdded = true;
+    if (!msgEl.id) msgEl.id = 'conv-turn-' + entries.length;
+    ensureRail();
+    var a = document.createElement('a');
+    a.className = 'nav-rail-item';
+    a.href = '#' + msgEl.id;
+    a.textContent = txt.length > 50 ? txt.slice(0, 50) + '…' : txt;
+    a.title = txt.slice(0, 200);
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
+      msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    rail.appendChild(a);
+    entries.push({ a: a, msgEl: msgEl });
+  }
+
+  function scan() {
+    var turns = document.querySelectorAll('.conv-message.role-user:not(.conv-meta-msg)');
+    for (var i = 0; i < turns.length; i++) addEntry(turns[i]);
+    if (rail) rail.style.display = entries.length < 3 ? 'none' : '';
+  }
+
+  function onScroll() {
+    if (!rail || entries.length < 3) return;
+    var best = 0, bestTop = -Infinity;
+    for (var i = 0; i < entries.length; i++) {
+      var top = entries[i].msgEl.getBoundingClientRect().top;
+      if (top <= 120 && top > bestTop) { bestTop = top; best = i; }
+    }
+    for (var j = 0; j < entries.length; j++) {
+      entries[j].a.classList.toggle('active', j === best);
+    }
+  }
+
+  scan();
+  var obs = new MutationObserver(function() { scan(); });
+  obs.observe(container, { childList: true, subtree: true });
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+// --- Navigation rail: markdown table of contents (right side, desktop) ---
+// Built from h1/h2/h3 after marked.parse; only for long, heading-rich docs.
+(function() {
+  var el = document.getElementById('markdown-rendered');
+  if (!el) return;
+  var headings = el.querySelectorAll('h1, h2, h3');
+  if (headings.length < 4) return;
+  if (el.scrollHeight < window.innerHeight * 1.5) return;
+
+  var rail = document.createElement('nav');
+  rail.className = 'nav-rail';
+  rail.setAttribute('aria-label', 'Table of contents');
+  var items = [];
+
+  Array.prototype.forEach.call(headings, function(h, idx) {
+    if (!h.id) {
+      var slug = (h.textContent || '').trim().toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 60);
+      h.id = 'toc-' + (slug || 'h') + '-' + idx;
+    }
+    var level = parseInt(h.tagName.charAt(1), 10);
+    var a = document.createElement('a');
+    a.className = 'nav-rail-item';
+    a.href = '#' + h.id;
+    a.textContent = (h.textContent || '').trim();
+    a.title = a.textContent;
+    a.style.paddingLeft = (8 + (level - 1) * 10) + 'px';
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
+      h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    rail.appendChild(a);
+    items.push({ a: a, h: h });
+  });
+
+  document.body.appendChild(rail);
+
+  function onScroll() {
+    var best = 0, bestTop = -Infinity;
+    for (var i = 0; i < items.length; i++) {
+      var top = items[i].h.getBoundingClientRect().top;
+      if (top <= 120 && top > bestTop) { bestTop = top; best = i; }
+    }
+    for (var j = 0; j < items.length; j++) {
+      items[j].a.classList.toggle('active', j === best);
+    }
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+// --- Cmd+K search palette ---
+(function() {
+  var palette = document.getElementById('search-palette');
+  var input = document.getElementById('search-input');
+  var resultsEl = document.getElementById('search-results');
+  if (!palette || !input || !resultsEl) return;
+  var results = [];
+  var active = -1;
+  var debounceTimer = null;
+
+  function isTypingContext(el) {
+    if (!el) return false;
+    var tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+    if (el.isContentEditable) return true;
+    if (el.closest && el.closest('.CodeMirror')) return true;
+    return false;
+  }
+
+  function openPalette() {
+    palette.classList.add('open');
+    input.value = '';
+    results = [];
+    active = -1;
+    resultsEl.innerHTML = '';
+    input.focus();
+  }
+
+  function closePalette() {
+    palette.classList.remove('open');
+    if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  }
+
+  function render() {
+    if (results.length === 0) {
+      resultsEl.innerHTML = '<li class="search-empty">No matches</li>';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    results.forEach(function(r, i) {
+      var li = document.createElement('li');
+      li.className = 'search-result' + (i === active ? ' active' : '');
+      var name = document.createElement('div');
+      name.className = 'sr-name';
+      name.textContent = r.name + (r.is_dir ? '/' : '');
+      var pathEl = document.createElement('div');
+      pathEl.className = 'sr-path';
+      var parent = r.path.replace(/\/[^\/]*$/, '') || '/';
+      pathEl.textContent = parent;
+      li.appendChild(name);
+      li.appendChild(pathEl);
+      li.addEventListener('mouseenter', function() { active = i; updateActive(); });
+      li.addEventListener('click', function() { navigate(r); });
+      frag.appendChild(li);
+    });
+    resultsEl.innerHTML = '';
+    resultsEl.appendChild(frag);
+  }
+
+  function updateActive() {
+    var rows = resultsEl.querySelectorAll('.search-result');
+    rows.forEach(function(row, i) {
+      row.classList.toggle('active', i === active);
+      if (i === active) row.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function navigate(r) {
+    if (!r) return;
+    window.location.href = '/browse' + r.path;
+  }
+
+  function doSearch(q) {
+    if (!q) { results = []; active = -1; resultsEl.innerHTML = ''; return; }
+    fetch('/api/search?q=' + encodeURIComponent(q))
+      .then(function(resp) { return resp.json(); })
+      .then(function(data) {
+        results = data || [];
+        active = results.length ? 0 : -1;
+        render();
+      })
+      .catch(function() { results = []; active = -1; render(); });
+  }
+
+  input.addEventListener('input', function() {
+    var q = input.value.trim();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function() { doSearch(q); }, 150);
+  });
+
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (results.length) { active = (active + 1) % results.length; updateActive(); }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (results.length) { active = (active - 1 + results.length) % results.length; updateActive(); }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (active >= 0 && results[active]) navigate(results[active]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closePalette();
+    }
+  });
+
+  palette.addEventListener('mousedown', function(e) {
+    if (e.target === palette) closePalette();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      if (palette.classList.contains('open')) { closePalette(); return; }
+      if (isTypingContext(document.activeElement)) return;
+      e.preventDefault();
+      openPalette();
+    }
+  });
+})();
+
 </script>
 </body>
 </html>"""
@@ -1828,10 +2538,38 @@ def _file_icon_svg(name):
     return FILE_TYPE_SVGS.get(ext, FILE_TYPE_SVGS['_default'])
 
 
+def _page_title(path_label):
+    """Compute the browser tab title from a _render_page label.
+
+    Filesystem paths -> "<basename> — <parent>" (or "Home" for BASE_DIR).
+    Tasks/Conversations labels get friendly names. Everything gets the
+    configured DISPLAY_NAME suffix.
+    """
+    if path_label.startswith('/'):
+        p = Path(path_label)
+        if str(p) == str(BASE_DIR):
+            title = 'Home'
+        else:
+            parent = p.parent.name or '/'
+            title = f'{p.name} — {parent}'
+    elif path_label == 'Scheduled Tasks':
+        title = 'Tasks'
+    elif path_label.startswith('Task: '):
+        title = f'{path_label[len("Task: "):]} — Tasks'
+    elif path_label == 'Conversations':
+        title = 'Conversations'
+    elif path_label.startswith('Conversation: '):
+        title = f'{path_label[len("Conversation: "):]} — Conversations'
+    else:
+        title = path_label
+    return html_mod.escape(f'{title} · {DISPLAY_NAME}')
+
+
 def _render_page(path_label, content, visitor=None):
     """Wrap content in the full HTML template with sidebar and breadcrumb."""
     visitor = visitor or get_visitor()
-    page = HTML_TEMPLATE.replace('DISPLAY_NAME_PLACEHOLDER', DISPLAY_NAME)
+    page = HTML_TEMPLATE.replace('PAGE_TITLE', _page_title(path_label))
+    page = page.replace('HOME_BROWSE_PATH_PLACEHOLDER', f'/browse{BASE_DIR}')
     page = page.replace('SIDEBAR_LINKS', make_sidebar(path_label, visitor))
     page = page.replace('BREADCRUMB', make_breadcrumb(path_label))
     page = page.replace('CONTENT', content)
@@ -1874,91 +2612,263 @@ for _d in _get_session_dirs():
 if CONVERSATIONS_DIR is None:
     CONVERSATIONS_DIR = Path.home() / '.claude' / 'projects'
 
+# --- Session metadata cache ---------------------------------------------
+# Parsing every .jsonl on each /conversations load is slow (1,000+ files,
+# some tens of MB). Cache each file's parsed metadata keyed by path, and only
+# re-parse files whose (mtime, size) changed or that are new. The cache is
+# guarded by a lock (Waitress runs 8 threads) and persisted to ~/.cache so a
+# server restart doesn't re-parse everything.
+_SESSIONS_CACHE = {}          # path(str) -> {'mtime', 'size', 'meta'}
+_SESSIONS_CACHE_LOCK = threading.Lock()
+_SESSIONS_CACHE_LOADED = False
+SESSIONS_CACHE_FILE = Path.home() / '.cache' / 'file-explorer-sessions.json'
+
+
+_SCHEDULED_PREFIX_CACHE = None
+
+
+def _scheduled_prompt_prefixes():
+    """Leading literal text (pre-variable) of each scheduled-task claude prompt.
+
+    Derived generically from the shell scripts referenced by the launchd plists
+    this app already monitors (get_launchd_jobs -> extract_claude_prompt), so it
+    stays owner-agnostic. Cached at module level; used to flag cron/scheduled
+    sessions cheaply. Empty when no tasks are configured
+    (FILE_EXPLORER_TASK_PREFIXES unset)."""
+    global _SCHEDULED_PREFIX_CACHE
+    if _SCHEDULED_PREFIX_CACHE is not None:
+        return _SCHEDULED_PREFIX_CACHE
+    prefixes = []
+    try:
+        for job in get_launchd_jobs():
+            script = job.get('script')
+            if not script:
+                continue
+            prompt = extract_claude_prompt(script)
+            if not prompt:
+                continue
+            lead = re.split(r'\$\{?\w+\}?', prompt)[0]
+            lead = lead.replace('\\n', ' ').replace('\n', ' ').strip()[:40]
+            if len(lead) >= 25:
+                prefixes.append(lead)
+    except Exception:
+        pass
+    _SCHEDULED_PREFIX_CACHE = prefixes
+    return prefixes
+
+
+# Generic Slack forwarding patterns (owner-agnostic).
+_SLACK_DM_RE = re.compile(r'^\[[^\]]+\]\(U[A-Z0-9]+\):')
+_SLACK_CHANNEL_RE = re.compile(r'(?:public |private )?channel #([A-Za-z0-9_-]+)')
+
+
+def _classify_session_source(first_user_msg):
+    """Classify a session by its RAW first user message (before preview stripping).
+    Returns (kind, source) where kind is channel|dm|scheduled|terminal."""
+    if not first_user_msg:
+        return 'terminal', 'Terminal'
+    m = first_user_msg.lstrip()
+    ch = _SLACK_CHANNEL_RE.search(m[:120])
+    if ch:
+        return 'channel', '#' + ch.group(1)
+    if m.startswith('You received this message') or _SLACK_DM_RE.match(m):
+        return 'dm', 'DM'
+    norm = m.replace('\n', ' ')[:50]
+    for key in _scheduled_prompt_prefixes():
+        if norm.startswith(key) or key.startswith(norm[:40]):
+            return 'scheduled', 'Scheduled'
+    return 'terminal', 'Terminal'
+
+
+def _parse_session_file(f, stat):
+    """Parse one JSONL session file into its metadata dict (no caching)."""
+    size = stat.st_size
+    mtime = stat.st_mtime
+
+    # Efficient scan: read line by line, extract metadata without loading entire file
+    first_user_msg = ''
+    first_timestamp = None
+    last_timestamp = None
+    msg_count = 0
+    user_count = 0
+    assistant_count = 0
+    entrypoint = ''
+
+    with open(f) as fh:
+        for line in fh:
+            try:
+                obj = json.loads(line)
+                t = obj.get('type')
+                ts = obj.get('timestamp')
+
+                if t == 'user':
+                    user_count += 1
+                    msg_count += 1
+                    if ts and not first_timestamp:
+                        first_timestamp = ts
+                    if ts:
+                        last_timestamp = ts
+                    if not entrypoint:
+                        entrypoint = obj.get('entrypoint', '')
+                    if not first_user_msg:
+                        msg = obj.get('message', {})
+                        content = msg.get('content', '')
+                        if isinstance(content, str):
+                            first_user_msg = content[:300]
+                        elif isinstance(content, list):
+                            for c in content:
+                                if isinstance(c, dict) and c.get('type') == 'text':
+                                    first_user_msg = c.get('text', '')[:300]
+                                    break
+
+                elif t == 'assistant':
+                    assistant_count += 1
+                    msg_count += 1
+                    if ts:
+                        last_timestamp = ts
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    # Classify source from the RAW first message, before preview stripping
+    kind, source = _classify_session_source(first_user_msg)
+
+    # Clean up the preview - strip Slack forwarding prefix
+    preview = first_user_msg
+    slack_prefix = re.match(
+        r'You received this message .+? respond with exactly: SKIP\s*',
+        preview, re.DOTALL
+    )
+    if slack_prefix:
+        preview = preview[slack_prefix.end():]
+    if preview and len(preview) > 300:
+        preview = preview[:300]
+    preview = preview.strip().replace('\n', ' ')[:100]
+
+    return {
+        'id': f.stem,
+        'path': str(f),
+        'size': size,
+        'mtime': mtime,
+        'first_timestamp': first_timestamp,
+        'last_timestamp': last_timestamp,
+        'msg_count': msg_count,
+        'user_count': user_count,
+        'assistant_count': assistant_count,
+        'preview': preview,
+        'entrypoint': entrypoint,
+        'kind': kind,
+        'source': source,
+    }
+
+
+def _load_sessions_cache_from_disk():
+    """Populate the in-memory cache from the persisted JSON file (best effort).
+
+    Called once, under the cache lock. Corrupt/missing files are ignored so we
+    simply fall back to a full parse.
+    """
+    global _SESSIONS_CACHE_LOADED
+    if _SESSIONS_CACHE_LOADED:
+        return
+    _SESSIONS_CACHE_LOADED = True
+    try:
+        with open(SESSIONS_CACHE_FILE) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            for path, entry in data.items():
+                if (isinstance(entry, dict)
+                        and 'mtime' in entry and 'size' in entry
+                        and isinstance(entry.get('meta'), dict)):
+                    _SESSIONS_CACHE[path] = entry
+    except Exception:
+        # Missing or corrupt cache — start empty, full parse will rebuild it.
+        _SESSIONS_CACHE.clear()
+
+
+def _write_sessions_cache_to_disk(snapshot):
+    """Atomically persist a snapshot of the cache (temp file + rename)."""
+    try:
+        SESSIONS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(SESSIONS_CACHE_FILE.parent),
+            prefix='.sessions-cache-', suffix='.tmp',
+        )
+        try:
+            with os.fdopen(fd, 'w') as fh:
+                json.dump(snapshot, fh)
+            os.replace(tmp, SESSIONS_CACHE_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        # Persistence is best-effort; a failure here must not break the page.
+        pass
+
 
 def list_conversation_sessions():
-    """List all JSONL conversation sessions with metadata."""
+    """List all JSONL conversation sessions with metadata.
+
+    Backed by an in-memory (and disk-persisted) cache keyed by file path. Only
+    files that are new or whose (mtime, size) changed are re-parsed; deleted
+    files are evicted. Return contract is unchanged: same keys, sorted by mtime
+    descending.
+    """
     sessions = []
     if not CONVERSATIONS_DIR.exists():
         return sessions
 
+    # Stat every file (cheap) outside the lock, and figure out which files
+    # actually need a (slow) re-parse.
+    current = {}   # path(str) -> (file, mtime, size)
     for f in CONVERSATIONS_DIR.glob('*.jsonl'):
         try:
             stat = f.stat()
-            size = stat.st_size
-            mtime = stat.st_mtime
+        except OSError:
+            continue
+        current[str(f)] = (f, stat.st_mtime, stat.st_size)
 
-            # Efficient scan: read line by line, extract metadata without loading entire file
-            first_user_msg = ''
-            first_timestamp = None
-            last_timestamp = None
-            msg_count = 0
-            user_count = 0
-            assistant_count = 0
-            entrypoint = ''
+    with _SESSIONS_CACHE_LOCK:
+        _load_sessions_cache_from_disk()
+        # Decide what needs parsing while holding the lock (cheap comparisons).
+        to_parse = []
+        for path, (f, mtime, size) in current.items():
+            entry = _SESSIONS_CACHE.get(path)
+            if entry is None or entry['mtime'] != mtime or entry['size'] != size:
+                to_parse.append((path, f, mtime, size))
 
-            with open(f) as fh:
-                for line in fh:
-                    try:
-                        obj = json.loads(line)
-                        t = obj.get('type')
-                        ts = obj.get('timestamp')
-
-                        if t == 'user':
-                            user_count += 1
-                            msg_count += 1
-                            if ts and not first_timestamp:
-                                first_timestamp = ts
-                            if ts:
-                                last_timestamp = ts
-                            if not entrypoint:
-                                entrypoint = obj.get('entrypoint', '')
-                            if not first_user_msg:
-                                msg = obj.get('message', {})
-                                content = msg.get('content', '')
-                                if isinstance(content, str):
-                                    first_user_msg = content[:300]
-                                elif isinstance(content, list):
-                                    for c in content:
-                                        if isinstance(c, dict) and c.get('type') == 'text':
-                                            first_user_msg = c.get('text', '')[:300]
-                                            break
-
-                        elif t == 'assistant':
-                            assistant_count += 1
-                            msg_count += 1
-                            if ts:
-                                last_timestamp = ts
-                    except (json.JSONDecodeError, KeyError):
-                        continue
-
-            # Clean up the preview
-            preview = first_user_msg
-            # Strip common forwarding prefixes
-            slack_prefix = re.match(
-                r'You received this message .+? respond with exactly: SKIP\s*',
-                preview, re.DOTALL
-            )
-            if slack_prefix:
-                preview = preview[slack_prefix.end():]
-            if preview and len(preview) > 300:
-                preview = preview[:300]
-            preview = preview.strip().replace('\n', ' ')[:100]
-
-            sessions.append({
-                'id': f.stem,
-                'path': str(f),
-                'size': size,
-                'mtime': mtime,
-                'first_timestamp': first_timestamp,
-                'last_timestamp': last_timestamp,
-                'msg_count': msg_count,
-                'user_count': user_count,
-                'assistant_count': assistant_count,
-                'preview': preview,
-                'entrypoint': entrypoint,
-            })
+    # Parse the stale/new files OUTSIDE the lock (the expensive part).
+    parsed = {}
+    for path, f, mtime, size in to_parse:
+        try:
+            stat_holder = type('S', (), {'st_size': size, 'st_mtime': mtime})()
+            meta = _parse_session_file(f, stat_holder)
+            parsed[path] = {'mtime': mtime, 'size': size, 'meta': meta}
         except Exception:
             continue
+
+    changed = False
+    with _SESSIONS_CACHE_LOCK:
+        # Apply freshly parsed entries.
+        for path, entry in parsed.items():
+            _SESSIONS_CACHE[path] = entry
+            changed = True
+        # Evict entries for files that no longer exist.
+        for path in list(_SESSIONS_CACHE.keys()):
+            if path not in current:
+                del _SESSIONS_CACHE[path]
+                changed = True
+        # Build the result from the cache (only for currently-present files).
+        for path in current:
+            entry = _SESSIONS_CACHE.get(path)
+            if entry:
+                sessions.append(dict(entry['meta']))
+        snapshot = dict(_SESSIONS_CACHE) if changed else None
+
+    if snapshot is not None:
+        _write_sessions_cache_to_disk(snapshot)
 
     sessions.sort(key=lambda s: s['mtime'], reverse=True)
     return sessions
@@ -2220,6 +3130,107 @@ def index():
     return redirect(f'/browse{BASE_DIR}')
 
 
+# --- Cmd+K search palette: cached file/dir index ---
+_SEARCH_EXTRA_SKIP = {'Library', '.Trash', 'venv', '.venv', 'site-packages',
+                      'node_modules', '.git', '__pycache__'}
+_SEARCH_HARD_SKIP = {'node_modules', '.git'}
+_SEARCH_INDEX = {'entries': [], 'built_at': 0.0}
+_SEARCH_INDEX_LOCK = threading.Lock()
+_SEARCH_INDEX_TTL = 60.0
+_SEARCH_MAX_CANDIDATES = 20000
+
+
+def _build_search_index():
+    """Walk BASE_DIR once, collecting up to _SEARCH_MAX_CANDIDATES (name, path, is_dir, mtime).
+
+    Built with supervisor visibility (ring-agnostic); per-request results are
+    filtered through is_path_allowed() so restricted paths never leak to
+    lower-privilege visitors.
+    """
+    entries = []
+    base = str(BASE_DIR)
+    for root, dirs, files in os.walk(base):
+        # Prune directories in-place so os.walk doesn't descend into them.
+        pruned = []
+        for d in dirs:
+            if d in _SEARCH_HARD_SKIP:
+                continue
+            if d in SKIP_DIRS or d in _SEARCH_EXTRA_SKIP:
+                continue
+            if d.startswith('.') and d != '.claude':
+                continue
+            pruned.append(d)
+        dirs[:] = pruned
+        for d in dirs:
+            full = os.path.join(root, d)
+            try:
+                mt = os.lstat(full).st_mtime
+            except OSError:
+                mt = 0.0
+            entries.append((d, full, True, mt))
+        for f in files:
+            if f.startswith('.'):
+                continue
+            full = os.path.join(root, f)
+            try:
+                mt = os.lstat(full).st_mtime
+            except OSError:
+                mt = 0.0
+            entries.append((f, full, False, mt))
+        if len(entries) >= _SEARCH_MAX_CANDIDATES:
+            break
+    return entries
+
+
+def _get_search_index():
+    now = time.time()
+    with _SEARCH_INDEX_LOCK:
+        if now - _SEARCH_INDEX['built_at'] > _SEARCH_INDEX_TTL or not _SEARCH_INDEX['entries']:
+            _SEARCH_INDEX['entries'] = _build_search_index()
+            _SEARCH_INDEX['built_at'] = now
+        return _SEARCH_INDEX['entries']
+
+
+def _fuzzy_rank(name, q):
+    """Return a rank score (lower is better) or None if q is not a subsequence of name.
+    0 = prefix, 1 = word-boundary, 2 = substring, 3 = subsequence."""
+    n = name.lower()
+    if n.startswith(q):
+        return 0
+    idx = n.find(q)
+    if idx != -1:
+        prev = n[idx - 1] if idx > 0 else ''
+        if idx == 0 or prev in ('-', '_', ' ', '.'):
+            return 1
+        return 2
+    # subsequence check
+    it = iter(n)
+    if all(ch in it for ch in q):
+        return 3
+    return None
+
+
+@app.route('/api/search')
+def api_search():
+    q = (request.args.get('q') or '').strip().lower()
+    if not q:
+        return jsonify([])
+    ring = get_visitor()["ring"]
+    entries = _get_search_index()
+    scored = []
+    for name, path, is_dir, mtime in entries:
+        # Ring enforcement: drop any path the visitor isn't allowed to see.
+        if not is_path_allowed(path, ring):
+            continue
+        rank = _fuzzy_rank(name, q)
+        if rank is not None:
+            scored.append((rank, -mtime, name, path, is_dir, mtime))
+    scored.sort(key=lambda t: (t[0], t[1]))
+    results = [{'name': name, 'path': path, 'is_dir': is_dir, 'mtime': mtime}
+               for _r, _m, name, path, is_dir, mtime in scored[:40]]
+    return jsonify(results)
+
+
 @app.route('/save', methods=['POST'])
 def save_file():
     try:
@@ -2234,8 +3245,18 @@ def save_file():
         if not is_path_allowed(str(file_path), visitor["ring"]):
             return jsonify(ok=False, error='Access denied'), 403
 
+        # Conflict detection: if the caller tells us the mtime it started from,
+        # refuse to clobber a file that changed on disk since (e.g. an agent edit).
+        expected_mtime = data.get('expected_mtime')
+        if expected_mtime is not None and file_path.exists():
+            actual_mtime = file_path.stat().st_mtime
+            if abs(actual_mtime - float(expected_mtime)) > 0.001:
+                return jsonify(ok=False, conflict=True,
+                               error='File changed on disk since you started editing',
+                               current_mtime=actual_mtime), 409
+
         file_path.write_text(data['content'])
-        return jsonify(ok=True)
+        return jsonify(ok=True, mtime=file_path.stat().st_mtime)
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
@@ -2581,10 +3602,14 @@ def serve_conversations():
                 time_str = dt.strftime('%-d %b')
             preview = s['preview'] or '<span style="color:var(--text-tertiary);font-style:italic">Scheduled task</span>'
             size_str = human_size(s['size'])
+            kind = s.get('kind', 'terminal')
+            source = s.get('source', 'Terminal')
+            badge = f'<span class="conv-badge kind-{kind}">{html_mod.escape(source)}</span>'
 
-            rows.append(f'''<div class="conv-row" onclick="window.location='/conversations/{s['id']}'">
+            rows.append(f'''<div class="conv-row" data-kind="{kind}" onclick="window.location='/conversations/{s['id']}'">
                 {marker_svg}
                 <span class="conv-time">{time_str}</span>
+                {badge}
                 <span class="conv-info"><span class="conv-preview">{preview}</span></span>
                 <span class="conv-size">{size_str}</span>
             </div>''')
@@ -2613,17 +3638,163 @@ def serve_conversations():
     })();
     </script>'''
 
-    content = f'''<div class="conv-index">
+    filter_bar = '''<div class="conv-filter-bar">
+        <span class="conv-filter-chip" data-filter="all">All</span>
+        <span class="conv-filter-chip" data-filter="conversations">Conversations</span>
+        <span class="conv-filter-chip" data-filter="scheduled">Scheduled</span>
+    </div>'''
+
+    filter_js = '''<script>
+    (function() {
+        var index = document.getElementById('convIndex');
+        var chips = document.querySelectorAll('.conv-filter-chip');
+        var sections = document.querySelectorAll('.conv-group-section');
+        function apply(mode) {
+            index.classList.remove('filter-conversations', 'filter-scheduled');
+            if (mode === 'conversations') index.classList.add('filter-conversations');
+            else if (mode === 'scheduled') index.classList.add('filter-scheduled');
+            chips.forEach(function(c) { c.classList.toggle('active', c.dataset.filter === mode); });
+            sections.forEach(function(s) {
+                var visible = 0;
+                s.querySelectorAll('.conv-row').forEach(function(r) {
+                    if (r.offsetParent !== null) visible++;
+                });
+                s.style.display = visible === 0 ? 'none' : '';
+            });
+        }
+        var saved = localStorage.getItem('convFilter') || 'all';
+        chips.forEach(function(c) {
+            c.addEventListener('click', function() {
+                localStorage.setItem('convFilter', c.dataset.filter);
+                apply(c.dataset.filter);
+            });
+        });
+        apply(saved);
+    })();
+    </script>'''
+
+    content = f'''<div class="conv-index" id="convIndex">
         <div class="conv-index-header">
             <h1>Conversations</h1>
             <div class="subtitle">{total} sessions</div>
         </div>
+        {filter_bar}
         <div class="conv-group-tabs">{"".join(tabs_html)}</div>
         {"".join(sections_html)}
     </div>
-    {tab_js}'''
+    {tab_js}
+    {filter_js}'''
 
     return _render_page('Conversations', content)
+
+
+def _render_message_html(msg):
+    """Render a single conversation message dict to HTML. Shared by the
+    page route and the infinite-scroll API. Keeps skill/meta collapsing."""
+    role = msg['role']
+    timestamp = msg.get('timestamp', '')
+    is_meta = msg.get('is_meta', False)
+    source_tool_id = msg.get('source_tool_id', '')
+    ts_display = ''
+    if timestamp:
+        try:
+            ts_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            ts_display = ts_dt.strftime('%-H:%M:%S')
+        except Exception:
+            pass
+
+    role_label = 'You' if role == 'user' else DISPLAY_NAME
+
+    # Detect skill/meta messages: collapse them
+    if role == 'user' and is_meta and source_tool_id:
+        # Extract skill name from content if possible
+        skill_name = ''
+        for block in msg['blocks']:
+            text = block.get('text', '')
+            if isinstance(text, str) and 'Base directory for this skill' in text:
+                # Try to extract skill path
+                match = re.search(r'skills/([^/\n]+)', text)
+                if match:
+                    skill_name = match.group(1)
+                break
+        label = f'Skill loaded: {skill_name}' if skill_name else 'Skill prompt loaded'
+        # Count approximate size
+        total_chars = sum(len(b.get('text', '')) for b in msg['blocks'])
+        size_note = f'{total_chars:,} chars'
+
+        return f'''<div class="conv-message role-{role} conv-meta-msg">
+                <details class="conv-skill-loaded">
+                    <summary>
+                        <span class="skill-icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5v11"/><path d="M3.5 5l3.5-3.5L10.5 5"/><path d="M2 8.5h10"/><path d="M4 11h6"/></svg></span>
+                        {html_mod.escape(label)} <span class="skill-size">({size_note})</span>
+                    </summary>
+                    <div class="skill-body">{''.join(_render_conversation_block(b, i) for i, b in enumerate(msg['blocks']))}</div>
+                </details>
+            </div>'''
+
+    blocks_html = []
+    for i, block in enumerate(msg['blocks']):
+        blocks_html.append(_render_conversation_block(block, i))
+
+    return f'''<div class="conv-message role-{role}">
+            <div class="conv-role-label">{role_label} <span class="conv-ts">{ts_display}</span></div>
+            {"".join(blocks_html)}
+        </div>'''
+
+
+@app.route('/api/conversations/<session_id>/messages')
+def api_conversation_messages(session_id):
+    """Return a rendered chunk of conversation messages for infinite scroll."""
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return jsonify(error='Access denied — supervisors only'), 403
+    messages = parse_conversation(session_id)
+    if messages is None:
+        return jsonify(error=f'Conversation not found: {session_id}'), 404
+
+    total = len(messages)
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    offset = max(0, offset)
+    limit = max(1, min(limit, 300))
+
+    chunk = messages[offset:offset + limit]
+    html = ''.join(_render_message_html(m) for m in chunk)
+    return jsonify(html=html, offset=offset, count=len(chunk), total=total)
+
+
+@app.route('/api/conversations/<session_id>/live')
+def api_conversation_live(session_id):
+    """Return messages after index N for a (possibly live) conversation session."""
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return jsonify({'error': 'Access denied — supervisors only'}), 403
+    messages = parse_conversation(session_id)
+    if messages is None:
+        return jsonify({'error': 'not found'}), 404
+
+    f = CONVERSATIONS_DIR / f'{session_id}.jsonl'
+    try:
+        mtime = f.stat().st_mtime
+    except OSError:
+        return jsonify({'error': 'not found'}), 404
+    live = (datetime.now() - datetime.fromtimestamp(mtime)).total_seconds() < 120
+
+    try:
+        after = int(request.args.get('after', 0))
+    except (TypeError, ValueError):
+        after = 0
+    if after < 0:
+        after = 0
+
+    html = ''.join(_render_message_html(m) for m in messages[after:])
+    return jsonify({'total': len(messages), 'live': live, 'html': html})
 
 
 @app.route('/conversations/<session_id>')
@@ -2640,6 +3811,7 @@ def serve_conversation_detail(session_id):
     f = CONVERSATIONS_DIR / f'{session_id}.jsonl'
     stat = f.stat()
     dt = datetime.fromtimestamp(stat.st_mtime)
+    is_live = (datetime.now() - dt).total_seconds() < 120
 
     # Calculate duration
     duration_str = ''
@@ -2677,64 +3849,79 @@ def serve_conversation_detail(session_id):
     total_msgs = len(messages)
     render_msgs = messages[:max_initial]
 
-    msgs_html = []
-    for msg in render_msgs:
-        role = msg['role']
-        timestamp = msg.get('timestamp', '')
-        is_meta = msg.get('is_meta', False)
-        source_tool_id = msg.get('source_tool_id', '')
-        ts_display = ''
-        if timestamp:
-            try:
-                ts_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                ts_display = ts_dt.strftime('%-H:%M:%S')
-            except Exception:
-                pass
+    msgs_html = [_render_message_html(msg) for msg in render_msgs]
 
-        role_label = 'You' if role == 'user' else DISPLAY_NAME
-
-        # Detect skill/meta messages: collapse them
-        if role == 'user' and is_meta and source_tool_id:
-            # Extract skill name from content if possible
-            skill_name = ''
-            for block in msg['blocks']:
-                text = block.get('text', '')
-                if isinstance(text, str) and 'Base directory for this skill' in text:
-                    # Try to extract skill path
-                    match = re.search(r'skills/([^/\n]+)', text)
-                    if match:
-                        skill_name = match.group(1)
-                    break
-            label = f'Skill loaded: {skill_name}' if skill_name else 'Skill prompt loaded'
-            # Count approximate size
-            total_chars = sum(len(b.get('text', '')) for b in msg['blocks'])
-            size_note = f'{total_chars:,} chars'
-
-            msgs_html.append(f'''<div class="conv-message role-{role} conv-meta-msg">
-                <details class="conv-skill-loaded">
-                    <summary>
-                        <span class="skill-icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5v11"/><path d="M3.5 5l3.5-3.5L10.5 5"/><path d="M2 8.5h10"/><path d="M4 11h6"/></svg></span>
-                        {html_mod.escape(label)} <span class="skill-size">({size_note})</span>
-                    </summary>
-                    <div class="skill-body">{''.join(_render_conversation_block(b, i) for i, b in enumerate(msg['blocks']))}</div>
-                </details>
-            </div>''')
-            continue
-
-        blocks_html = []
-        for i, block in enumerate(msg['blocks']):
-            blocks_html.append(_render_conversation_block(block, i))
-
-        msgs_html.append(f'''<div class="conv-message role-{role}">
-            <div class="conv-role-label">{role_label} <span class="conv-ts">{ts_display}</span></div>
-            {"".join(blocks_html)}
-        </div>''')
-
-    # "Load more" if truncated
+    # Infinite-scroll sentinel if truncated
     load_more = ''
     if total_msgs > max_initial:
-        remaining = total_msgs - max_initial
-        load_more = f'<a href="/conversations/{session_id}?limit={total_msgs}" class="conv-load-more">Load {remaining} more messages</a>'
+        load_more = f'''<div id="conv-sentinel" data-session="{html_mod.escape(session_id, quote=True)}" data-offset="{max_initial}" data-total="{total_msgs}">
+            <span class="conv-sentinel-label">loading older messages&hellip;</span>
+        </div>'''
+
+    # Live polling script (only when session is being actively written)
+    live_poll_js = ''
+    if is_live:
+        live_poll_js = '''
+    <script>
+    (function() {
+        var SESSION_ID = ''' + json.dumps(session_id) + ''';
+        var count = ''' + str(len(render_msgs)) + ''';
+        var deadPolls = 0;
+        var timer = null;
+        var container = document.querySelector('.conv-detail');
+        var indicator = document.getElementById('conv-live-indicator');
+
+        function renderMarkdown(scope) {
+            scope.querySelectorAll('.conv-markdown[data-raw]').forEach(function(el) {
+                if (typeof marked !== 'undefined') {
+                    try {
+                        el.innerHTML = marked.parse(el.getAttribute('data-raw'));
+                        el.querySelectorAll('pre code').forEach(function(block) {
+                            if (typeof hljs !== 'undefined') hljs.highlightElement(block);
+                        });
+                    } catch(e) {}
+                }
+            });
+        }
+
+        function stopPolling() {
+            if (timer) { clearInterval(timer); timer = null; }
+            if (indicator) {
+                indicator.classList.add('ended');
+                indicator.innerHTML = '<span class="conv-live-dot"></span>ended';
+            }
+        }
+
+        function poll() {
+            fetch('/api/conversations/' + SESSION_ID + '/live?after=' + count)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.html && data.total > count) {
+                        var nearBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 200);
+                        var tmp = document.createElement('div');
+                        tmp.innerHTML = data.html;
+                        var loadMore = container.querySelector('#conv-sentinel');
+                        var newNodes = [];
+                        while (tmp.firstChild) {
+                            var node = tmp.firstChild;
+                            tmp.removeChild(node);
+                            if (loadMore) { container.insertBefore(node, loadMore); }
+                            else { container.appendChild(node); }
+                            if (node.nodeType === 1) newNodes.push(node);
+                        }
+                        newNodes.forEach(renderMarkdown);
+                        count = data.total;
+                        if (nearBottom) { window.scrollTo(0, document.body.scrollHeight); }
+                    }
+                    if (data.live) { deadPolls = 0; }
+                    else { deadPolls++; if (deadPolls >= 3) { stopPolling(); } }
+                })
+                .catch(function() {});
+        }
+
+        timer = setInterval(poll, 5000);
+    })();
+    </script>'''
 
     content = f'''<div class="conv-detail">
         <div class="conv-detail-topbar">
@@ -2747,27 +3934,77 @@ def serve_conversation_detail(session_id):
                 {f'<span>{duration_str}</span>' if duration_str else ''}
                 <span>{human_size(stat.st_size)}</span>
                 <span style="opacity:0.5">{session_id[:8]}</span>
+                {'<span class="conv-live-indicator" id="conv-live-indicator"><span class="conv-live-dot"></span>live</span>' if is_live else ''}
             </div>
         </div>
         {"".join(msgs_html)}
         {load_more}
     </div>
     <script>
-    // Render markdown in conversation text blocks
-    document.querySelectorAll('.conv-markdown[data-raw]').forEach(function(el) {{
-        if (typeof marked !== 'undefined') {{
-            try {{
-                var raw = el.getAttribute('data-raw');
-                el.innerHTML = marked.parse(raw);
-                el.querySelectorAll('pre code').forEach(function(block) {{
-                    if (typeof hljs !== 'undefined') hljs.highlightElement(block);
-                }});
-            }} catch(e) {{
-                // fallback to escaped text already in element
+    // Render markdown + highlight code within a given root (defaults to document)
+    function convRenderMarkdown(root) {{
+        (root || document).querySelectorAll('.conv-markdown[data-raw]').forEach(function(el) {{
+            if (typeof marked !== 'undefined') {{
+                try {{
+                    var raw = el.getAttribute('data-raw');
+                    el.innerHTML = marked.parse(raw);
+                    el.querySelectorAll('pre code').forEach(function(block) {{
+                        if (typeof hljs !== 'undefined') hljs.highlightElement(block);
+                    }});
+                }} catch(e) {{
+                    // fallback to escaped text already in element
+                }}
             }}
+        }});
+    }}
+    convRenderMarkdown(document);
+
+    // Infinite scroll: load older messages as the sentinel comes into view
+    (function() {{
+        var sentinel = document.getElementById('conv-sentinel');
+        if (!sentinel || !('IntersectionObserver' in window)) return;
+        var loading = false;
+
+        function loadMore() {{
+            if (loading) return;
+            var offset = parseInt(sentinel.getAttribute('data-offset'), 10) || 0;
+            var total = parseInt(sentinel.getAttribute('data-total'), 10) || 0;
+            if (offset >= total) {{ observer.disconnect(); sentinel.remove(); return; }}
+            loading = true;
+            var session = sentinel.getAttribute('data-session');
+            fetch('/api/conversations/' + encodeURIComponent(session) + '/messages?offset=' + offset + '&limit=100')
+                .then(function(r) {{ return r.json(); }})
+                .then(function(data) {{
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = data.html;
+                    var nodes = Array.prototype.slice.call(tmp.children);
+                    nodes.forEach(function(node) {{ sentinel.parentNode.insertBefore(node, sentinel); }});
+                    nodes.forEach(function(node) {{ convRenderMarkdown(node); }});
+                    var newOffset = data.offset + data.count;
+                    sentinel.setAttribute('data-offset', newOffset);
+                    sentinel.setAttribute('data-total', data.total);
+                    loading = false;
+                    if (newOffset >= data.total || data.count === 0) {{
+                        observer.disconnect();
+                        sentinel.remove();
+                    }} else if (isVisible(sentinel)) {{
+                        loadMore();
+                    }}
+                }})
+                .catch(function() {{ loading = false; }});
         }}
-    }});
-    </script>'''
+
+        function isVisible(el) {{
+            var r = el.getBoundingClientRect();
+            return r.top < window.innerHeight && r.bottom > 0;
+        }}
+
+        var observer = new IntersectionObserver(function(entries) {{
+            entries.forEach(function(entry) {{ if (entry.isIntersecting) loadMore(); }});
+        }}, {{ rootMargin: '400px' }});
+        observer.observe(sentinel);
+    }})();
+    </script>{live_poll_js}'''
 
     return _render_page(f'Conversation: {date_str}', content)
 
@@ -2863,7 +4100,8 @@ def _serve_directory(p, visitor=None):
                 pass
 
         name_html = f'<a href="/browse{e["path"]}" class="{extra_class}">{display_name}</a>'
-        rows.append(f'''<tr>
+        name_attr = html_mod.escape(e['name'], quote=True)
+        rows.append(f'''<tr data-name="{name_attr}" data-size="{e['size']}" data-mtime="{e['mtime']}" data-isdir="{1 if e['is_dir'] else 0}">
             <td><div class="name"><span class="icon">{icon}</span>{name_html}</div></td>
             <td class="size">{size}</td>
             <td class="date">{date}</td>
@@ -2874,7 +4112,23 @@ def _serve_directory(p, visitor=None):
     if str(p) == str(BASE_DIR):
         hero_html = _home_hero()
 
-    content = f'''{hero_html}<div class="listing"><table>
+    # Slim filter/sort control row — only for directories with 8+ entries
+    controls_html = ''
+    if len(entries) >= 8:
+        controls_html = (
+            '<div class="listing-controls" data-dirkey="' + html_mod.escape(str(p), quote=True) + '">'
+            '<input class="listing-filter" type="text" placeholder="filter…" '
+            'spellcheck="false" autocomplete="off">'
+            '<div class="listing-sort">'
+            '<button class="sort-btn" data-key="name">name</button>'
+            '<button class="sort-btn" data-key="size">size</button>'
+            '<button class="sort-btn" data-key="modified">modified</button>'
+            '<span class="listing-count"></span>'
+            '</div>'
+            '</div>'
+        )
+
+    content = f'''{hero_html}<div class="listing">{controls_html}<table>
         <tbody>{"".join(rows)}</tbody>
     </table></div>'''
 
@@ -2902,9 +4156,14 @@ def _serve_file(p):
             # so we use the original text, only escaping </script> to prevent tag closure.
             raw_for_script = text.replace('</script>', '<\\/script>')
             is_editable = True
-            edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html_mod.escape(str(p))}">Edit</button>' if is_editable else ''
+            edit_button = f'<button id="btn-edit" class="btn-edit" data-path="{html_mod.escape(str(p))}" data-mtime="{p.stat().st_mtime}">Edit</button>' if is_editable else ''
             edit_area = '''<div id="edit-area" style="display:none;">
                 <div class="edit-bar" style="margin-bottom:12px; justify-content:flex-end;">
+                    <span id="conflict-warning" style="display:none; align-items:center; gap:10px; margin-right:auto; font-family:'JetBrains Mono',monospace; font-size:12px; color:#BF616A;">
+                        <span>File changed on disk.</span>
+                        <button id="btn-overwrite" type="button" style="background:none; border:none; color:#BF616A; font-family:'JetBrains Mono',monospace; font-size:12px; text-decoration:underline; cursor:pointer; padding:0;">Overwrite anyway</button>
+                        <button id="btn-reload" type="button" style="background:none; border:none; color:#BF616A; font-family:'JetBrains Mono',monospace; font-size:12px; text-decoration:underline; cursor:pointer; padding:0;">Reload file</button>
+                    </span>
                     <span id="save-status" class="save-status"></span>
                     <button id="btn-cancel" class="btn-cancel">Cancel</button>
                     <button id="btn-save" class="btn-save">Save</button>
