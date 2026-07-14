@@ -1501,6 +1501,72 @@ def process_message_async(event: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# In-thread stop (the Esc key for Slack)
+# ---------------------------------------------------------------------------
+
+
+def _interrupt_session(session: LiveSession) -> bool:
+    """Send the CLI an interrupt (the programmatic Esc). True if the turn ended cleanly."""
+    try:
+        payload = json.dumps({"type": "control_request",
+                              "request_id": f"interrupt-{int(time.time() * 1000)}",
+                              "request": {"subtype": "interrupt"}})
+        with session.stdin_lock:
+            session.proc.stdin.write(payload + "\n")
+            session.proc.stdin.flush()
+    except Exception as e:
+        logger.warning(f"Interrupt write failed for {session.thread_ts}: {e}")
+    if session._turn_done.wait(timeout=5):
+        return True
+    # Interrupt didn't land — hard-kill; the thread resumes via --resume next message
+    try:
+        session.proc.terminate()
+    except Exception:
+        pass
+    session._turn_done.set()
+    return False
+
+
+def _maybe_stop_from_message(event: dict) -> bool:
+    """In-thread Esc: Slack blocks slash commands in thread reply boxes, so a
+    bare 'stop' (or 'esc') in a thread with a running turn interrupts it
+    instead of queueing as a normal message. Returns True if handled.
+
+    Exact-match only — sentences containing 'stop' pass through untouched,
+    and with no running turn the word falls through as a normal message.
+    Authorized users only: interrupting a run is a control action, even in
+    channels where unauthorized users may otherwise talk to the bot.
+    """
+    if not is_authorized(event.get("user", "")):
+        return False
+    text = re.sub(r"<@[A-Z0-9]+>", "", event.get("text", "")).strip().lower()
+    if text not in ("stop", "esc"):
+        return False
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    with _live_sessions_lock:
+        session = _live_sessions.get(thread_ts)
+    if not session or session.proc.poll() is not None or not session.turn_lock.locked():
+        return False  # nothing running here — treat as a normal message
+
+    def _do_stop():
+        clean = _interrupt_session(session)
+        note = ("stopped mid-run — tell me where to go instead" if clean
+                else "had to hard-kill the process; the thread resumes with full context on your next message")
+        try:
+            slack_client.chat_postMessage(
+                channel=session.channel, thread_ts=session.thread_ts,
+                text=f"Stopped: {note}",
+                blocks=[{"type": "context", "elements": [
+                    {"type": "mrkdwn", "text": f":octagonal_sign: _{note}_"}]}],
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_do_stop, daemon=True).start()
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Slack event handlers
 # ---------------------------------------------------------------------------
 
@@ -1537,6 +1603,10 @@ def handle_message(event, say):
             return
         log_unauthorized(event)
 
+    # In-thread Esc: bare "stop" while a turn is running interrupts it
+    if _maybe_stop_from_message(event):
+        return
+
     # Process async — return immediately so Slack gets its 200
     threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
 
@@ -1560,6 +1630,10 @@ def handle_mention(event, say):
             say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
             return
         log_unauthorized(event)
+
+    # "@bot stop" in a thread = in-thread Esc
+    if _maybe_stop_from_message(event):
+        return
 
     threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
 
