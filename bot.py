@@ -596,6 +596,20 @@ def _post_context_notice(session: LiveSession, ctx: int) -> None:
         logger.warning(f"Failed to post context notice: {e}")
 
 
+def _post_skill_notice(session: LiveSession, skill: str, args_str: str) -> None:
+    """Post a small grey context-block notice that a skill was invoked."""
+    try:
+        note = f"skill: {skill}" + (f" · {args_str}" if args_str else "")
+        slack_client.chat_postMessage(
+            channel=session.channel, thread_ts=session.thread_ts,
+            text=note,
+            blocks=[{"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f":toolbox: _{note}_"}]}],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to post skill notice: {e}")
+
+
 def _track_context(session: LiveSession, data: dict) -> None:
     """Watch usage on assistant events; announce each new 100k threshold.
 
@@ -652,6 +666,15 @@ def _reader_loop(session: LiveSession) -> None:
                 _track_context(session, data)
                 content = data.get("message", {}).get("content", [])
                 for block in content:
+                    # Skill visibility: announce main-loop skill invocations in a
+                    # grey context block (bot-side only, never enters Claude's
+                    # context). Subagent skill calls are skipped to avoid noise.
+                    if (isinstance(block, dict) and block.get("type") == "tool_use"
+                            and block.get("name") == "Skill"
+                            and not data.get("parent_tool_use_id")):
+                        inp = block.get("input") or {}
+                        args_str = str(inp.get("args") or "")[:120]
+                        _post_skill_notice(session, inp.get("skill", "?"), args_str)
                     if isinstance(block, dict) and block.get("type") == "text":
                         text = block.get("text", "").strip()
                         if text and session._on_text:
