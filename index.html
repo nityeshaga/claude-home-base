@@ -563,14 +563,16 @@
                         <p><strong class="text-slate-900 dark:text-slate-100">a.</strong> Go to <a href="https://api.slack.com/apps" class="text-blue-600 hover:underline" target="_blank">api.slack.com/apps</a> &rarr; Create New App &rarr; "From scratch"</p>
                         <p><strong class="text-slate-900 dark:text-slate-100">b.</strong> Name it — whatever feels right for your AI cofounder</p>
                         <p><strong class="text-slate-900 dark:text-slate-100">c.</strong> OAuth & Permissions &rarr; Add Bot Token Scopes: <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">app_mentions:read</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">chat:write</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">im:history</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">im:read</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">im:write</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">files:read</code></p>
-                        <p><strong class="text-slate-900 dark:text-slate-100">d.</strong> Event Subscriptions &rarr; Enable Events &rarr; set Request URL to <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">https://bot.yourdomain.com/slack/events</code> (you'll set up Cloudflare Tunnel for this in step 5)</p>
-                        <p><strong class="text-slate-900 dark:text-slate-100">e.</strong> Subscribe to bot events: <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">app_mention</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">message.im</code></p>
-                        <p><strong class="text-slate-900 dark:text-slate-100">f.</strong> Basic Information &rarr; copy the <strong class="text-slate-900 dark:text-slate-100">Signing Secret</strong> (used to verify requests are really from Slack)</p>
-                        <p><strong class="text-slate-900 dark:text-slate-100">g.</strong> Install to workspace &rarr; save the Bot Token (<code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">xoxb-...</code>)</p>
-                        <p><strong class="text-slate-900 dark:text-slate-100">h.</strong> Find your Slack user ID: Profile &rarr; <strong>&#8942;</strong> menu &rarr; "Copy member ID"</p>
+                        <p><strong class="text-slate-900 dark:text-slate-100">d.</strong> <strong class="text-slate-900 dark:text-slate-100">Leave Event Subscriptions alone for now</strong> — you'll enable it in step 5, once the tunnel and bot are actually running</p>
+                        <p><strong class="text-slate-900 dark:text-slate-100">e.</strong> Basic Information &rarr; copy the <strong class="text-slate-900 dark:text-slate-100">Signing Secret</strong> (used to verify requests are really from Slack)</p>
+                        <p><strong class="text-slate-900 dark:text-slate-100">f.</strong> Install to workspace &rarr; save the Bot Token (<code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">xoxb-...</code>)</p>
+                        <p><strong class="text-slate-900 dark:text-slate-100">g.</strong> Find your Slack user ID: Profile &rarr; <strong>&#8942;</strong> menu &rarr; "Copy member ID"</p>
                     </div>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
                         <strong class="text-blue-800 dark:text-blue-400">No Socket Mode.</strong> We're using the HTTP Events API — the production-standard approach. Slack sends HTTP POST requests to your public URL. Each event is stateless and independent. No fragile WebSocket connections to drop.
+                    </div>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
+                        <strong class="text-amber-800 dark:text-amber-400">Changing scopes later?</strong> Any change to OAuth scopes requires reinstalling the app to your workspace — and reinstalling rotates the <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">xoxb-...</code> bot token. Copy the new token into <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">.env</code> afterward or the bot will start failing on auth.
                     </div>
 
                     <!-- App Manifest -->
@@ -642,14 +644,32 @@
                     <div class="code-block">
                         <span class="comment"># SSH from your main machine (same WiFi network)</span><br>
                         <span class="cmd">ssh</span> bot@your-mac.local<br><br>
-                        <span class="comment"># Create the bot directory</span><br>
-                        <span class="cmd">mkdir</span> <span class="flag">-p</span> ~/Projects/slack-bot<br>
-                        <span class="cmd">cd</span> ~/Projects/slack-bot<br><br>
+                        <span class="comment"># Clone the bot repo</span><br>
+                        <span class="cmd">mkdir</span> <span class="flag">-p</span> ~/Projects<br>
+                        <span class="cmd">cd</span> ~/Projects<br>
+                        <span class="cmd">git clone</span> https://github.com/nityeshaga/claude-home-base.git slack-bot<br>
+                        <span class="cmd">cd</span> slack-bot<br><br>
                         <span class="comment"># Set up Python environment</span><br>
                         <span class="cmd">python3</span> <span class="flag">-m</span> venv venv<br>
                         <span class="cmd">source</span> venv/bin/activate<br>
-                        <span class="cmd">pip install</span> slack-bolt slack-sdk python-dotenv flask
+                        <span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt<br><br>
+                        <span class="comment"># Configure environment variables</span><br>
+                        <span class="cmd">cp</span> .env.example .env<br>
+                        <span class="cmd">nano</span> .env  <span class="comment"># Add your Slack tokens, Signing Secret, user IDs</span>
                     </div>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
+                        <strong class="text-amber-800 dark:text-amber-400">Note:</strong> macOS restricts launchd access to certain folders (like Documents). Running the bot from <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">~/Projects/</code> avoids permission errors.
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">The repo's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">bot.py</code> already handles:</p>
+                    <ul class="checklist space-y-2 text-[0.92rem] text-slate-500 dark:text-slate-400">
+                        <li>HTTP Events API via Flask (production-standard, each event is a stateless HTTP POST)</li>
+                        <li>Async processing — responds to Slack within 3 seconds, runs Claude in background</li>
+                        <li>Auth gating — only allowed Slack user IDs can interact</li>
+                        <li>Thread-based conversations with Claude session continuity</li>
+                        <li>Markdown to Slack formatting conversion</li>
+                        <li>File/image attachment handling</li>
+                        <li>Audit logging of every interaction</li>
+                    </ul>
                 </div>
 
                 <div>
@@ -664,37 +684,7 @@
                 </div>
 
                 <div>
-                    <h3 class="font-semibold mb-3">4. Set up the bot</h3>
-                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">Write your bot script (or use an existing Slack-to-Claude-Code bridge) and configure it:</p>
-                    <div class="code-block">
-                        <span class="comment"># Create the bot directory</span><br>
-                        <span class="cmd">mkdir</span> <span class="flag">-p</span> ~/Projects/slack-bot<br>
-                        <span class="cmd">cd</span> ~/Projects/slack-bot<br><br>
-                        <span class="comment"># Set up Python environment</span><br>
-                        <span class="cmd">python3</span> <span class="flag">-m</span> venv venv<br>
-                        <span class="cmd">source</span> venv/bin/activate<br>
-                        <span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt<br><br>
-                        <span class="comment"># Configure environment variables</span><br>
-                        <span class="cmd">cp</span> .env.example .env<br>
-                        <span class="cmd">nano</span> .env  <span class="comment"># Add your Slack tokens, Signing Secret, user IDs</span>
-                    </div>
-                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
-                        <strong class="text-amber-800 dark:text-amber-400">Note:</strong> macOS restricts launchd access to certain folders (like Documents). Running the bot from <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">~/Projects/</code> avoids permission errors.
-                    </div>
-                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">The bot should handle:</p>
-                    <ul class="checklist space-y-2 text-[0.92rem] text-slate-500 dark:text-slate-400">
-                        <li>HTTP Events API via Flask (production-standard, each event is a stateless HTTP POST)</li>
-                        <li>Async processing — responds to Slack within 3 seconds, runs Claude in background</li>
-                        <li>Auth gating — only allowed Slack user IDs can interact</li>
-                        <li>Thread-based conversations with Claude session continuity</li>
-                        <li>Markdown to Slack formatting conversion</li>
-                        <li>File/image attachment handling</li>
-                        <li>Audit logging of every interaction</li>
-                    </ul>
-                </div>
-
-                <div>
-                    <h3 class="font-semibold mb-3">5. Set up Cloudflare Tunnel</h3>
+                    <h3 class="font-semibold mb-3">4. Set up Cloudflare Tunnel</h3>
                     <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">This gives your Mac a public URL (<code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">bot.yourdomain.com</code>) so Slack can send events to it. Free, production-grade, HTTPS included.</p>
                     <div class="mb-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
                         <strong class="text-amber-800 dark:text-amber-400">Prerequisite:</strong> Your domain must already be on Cloudflare — its nameservers must point to Cloudflare. If the domain is on a different registrar (Namecheap, GoDaddy, etc.), add it to Cloudflare first and update the nameservers.
@@ -724,12 +714,12 @@
                         <span class="cmd">sudo</span> cloudflared service install
                     </div>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
-                        <strong class="text-green-800">Now <code>https://bot.yourdomain.com</code> routes to your Mac.</strong> Cloudflare handles HTTPS, DDoS protection, and auto-retries. The tunnel runs as a system service — survives reboots. Go back to your Slack app's Event Subscriptions and set the Request URL to <code>https://bot.yourdomain.com/slack/events</code>.
+                        <strong class="text-green-800">Now <code>https://bot.yourdomain.com</code> routes to your Mac.</strong> Cloudflare handles HTTPS, DDoS protection, and auto-retries. The tunnel runs as a system service — survives reboots. You'll wire this URL into your Slack app's Event Subscriptions in the next step, once the bot is running.
                     </div>
                 </div>
 
                 <div>
-                    <h3 class="font-semibold mb-3">6. Test it</h3>
+                    <h3 class="font-semibold mb-3">5. Test it</h3>
                     <div class="code-block">
                         <span class="comment"># Make sure Cloudflare Tunnel is running first, then:</span><br>
                         <span class="cmd">cd</span> ~/Projects/slack-bot<br>
@@ -737,6 +727,12 @@
                         <span class="cmd">python</span> bot.py<br><br>
                         <span class="comment"># You should see:</span><br>
                         <span class="string">Bot starting on port 3000</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">Now that the bot is up and the tunnel is live, go back to <a href="https://api.slack.com/apps" class="text-blue-600 hover:underline" target="_blank">your Slack app</a> and finish the wiring:</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-5 text-[0.92rem] text-slate-500 dark:text-slate-400 space-y-3">
+                        <p><strong class="text-slate-900 dark:text-slate-100">a.</strong> Event Subscriptions &rarr; Enable Events</p>
+                        <p><strong class="text-slate-900 dark:text-slate-100">b.</strong> Set the Request URL to <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">https://bot.yourdomain.com/slack/events</code> &mdash; Slack immediately sends a verification challenge, so wait for the green <strong class="text-slate-900 dark:text-slate-100">Verified</strong> badge</p>
+                        <p><strong class="text-slate-900 dark:text-slate-100">c.</strong> Subscribe to bot events: <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">app_mention</code>, <code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">message.im</code> &rarr; Save Changes</p>
                     </div>
                     <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">DM the bot in Slack. If it responds — you're in business.</p>
                 </div>
