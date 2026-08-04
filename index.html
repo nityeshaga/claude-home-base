@@ -587,51 +587,50 @@
                         <div class="accordion-content">
                             <div class="px-5 pb-4">
                                 <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">When creating the app, choose <strong class="text-slate-900 dark:text-slate-100">"From an app manifest"</strong> instead of "From scratch". Paste this JSON — it configures everything in one shot. Replace the bot name and URL with your own:</p>
-                                <div class="code-block text-[0.7rem]">
-{<br>
-&nbsp;&nbsp;<span class="string">"display_information"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"name"</span>: <span class="string">"Your Bot Name"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"description"</span>: <span class="string">"AI cofounder for your product"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"background_color"</span>: <span class="string">"#0f172a"</span><br>
-&nbsp;&nbsp;},<br>
-&nbsp;&nbsp;<span class="string">"features"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"bot_user"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"display_name"</span>: <span class="string">"Your Bot Name"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"always_online"</span>: <span class="cmd">true</span><br>
-&nbsp;&nbsp;&nbsp;&nbsp;}<br>
-&nbsp;&nbsp;},<br>
-&nbsp;&nbsp;<span class="string">"oauth_config"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"scopes"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"bot"</span>: [<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"app_mentions:read"</span>, <span class="string">"channels:history"</span>, <span class="string">"channels:join"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"channels:read"</span>, <span class="string">"chat:write"</span>, <span class="string">"chat:write.customize"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"commands"</span>, <span class="string">"files:read"</span>, <span class="string">"files:write"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"groups:history"</span>, <span class="string">"groups:read"</span>, <span class="string">"im:history"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"im:read"</span>, <span class="string">"im:write"</span>, <span class="string">"links:read"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"mpim:history"</span>, <span class="string">"mpim:read"</span>, <span class="string">"mpim:write"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"pins:read"</span>, <span class="string">"pins:write"</span>, <span class="string">"reactions:read"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"reactions:write"</span>, <span class="string">"team:read"</span>, <span class="string">"users:read"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"users:read.email"</span>, <span class="string">"users.profile:read"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"bookmarks:read"</span>, <span class="string">"metadata.message:read"</span><br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]<br>
-&nbsp;&nbsp;&nbsp;&nbsp;}<br>
-&nbsp;&nbsp;},<br>
-&nbsp;&nbsp;<span class="string">"settings"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"event_subscriptions"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"request_url"</span>: <span class="string">"https://bot.yourdomain.com/slack/events"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"bot_events"</span>: [<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"app_mention"</span>, <span class="string">"message.im"</span>, <span class="string">"message.channels"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"message.groups"</span>, <span class="string">"message.mpim"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"member_joined_channel"</span>, <span class="string">"reaction_added"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"file_shared"</span><br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]<br>
-&nbsp;&nbsp;&nbsp;&nbsp;},<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"org_deploy_enabled"</span>: <span class="cmd">false</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"socket_mode_enabled"</span>: <span class="cmd">false</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"token_rotation_enabled"</span>: <span class="cmd">false</span><br>
-&nbsp;&nbsp;}<br>
-}
-                                </div>
+                                <pre class="code-block text-[0.7rem]" style="margin: 0;">
+{
+  <span class="string">"display_information"</span>: {
+    <span class="string">"name"</span>: <span class="string">"Your Bot Name"</span>,
+    <span class="string">"description"</span>: <span class="string">"AI cofounder for your product"</span>,
+    <span class="string">"background_color"</span>: <span class="string">"#0f172a"</span>
+  },
+  <span class="string">"features"</span>: {
+    <span class="string">"bot_user"</span>: {
+      <span class="string">"display_name"</span>: <span class="string">"Your Bot Name"</span>,
+      <span class="string">"always_online"</span>: <span class="cmd">true</span>
+    }
+  },
+  <span class="string">"oauth_config"</span>: {
+    <span class="string">"scopes"</span>: {
+      <span class="string">"bot"</span>: [
+        <span class="string">"app_mentions:read"</span>, <span class="string">"channels:history"</span>, <span class="string">"channels:join"</span>,
+        <span class="string">"channels:read"</span>, <span class="string">"chat:write"</span>, <span class="string">"chat:write.customize"</span>,
+        <span class="string">"commands"</span>, <span class="string">"files:read"</span>, <span class="string">"files:write"</span>,
+        <span class="string">"groups:history"</span>, <span class="string">"groups:read"</span>, <span class="string">"im:history"</span>,
+        <span class="string">"im:read"</span>, <span class="string">"im:write"</span>, <span class="string">"links:read"</span>,
+        <span class="string">"mpim:history"</span>, <span class="string">"mpim:read"</span>, <span class="string">"mpim:write"</span>,
+        <span class="string">"pins:read"</span>, <span class="string">"pins:write"</span>, <span class="string">"reactions:read"</span>,
+        <span class="string">"reactions:write"</span>, <span class="string">"team:read"</span>, <span class="string">"users:read"</span>,
+        <span class="string">"users:read.email"</span>, <span class="string">"users.profile:read"</span>,
+        <span class="string">"bookmarks:read"</span>, <span class="string">"metadata.message:read"</span>
+      ]
+    }
+  },
+  <span class="string">"settings"</span>: {
+    <span class="string">"event_subscriptions"</span>: {
+      <span class="string">"request_url"</span>: <span class="string">"https://bot.yourdomain.com/slack/events"</span>,
+      <span class="string">"bot_events"</span>: [
+        <span class="string">"app_mention"</span>, <span class="string">"message.im"</span>, <span class="string">"message.channels"</span>,
+        <span class="string">"message.groups"</span>, <span class="string">"message.mpim"</span>,
+        <span class="string">"member_joined_channel"</span>, <span class="string">"reaction_added"</span>,
+        <span class="string">"file_shared"</span>
+      ]
+    },
+    <span class="string">"org_deploy_enabled"</span>: <span class="cmd">false</span>,
+    <span class="string">"socket_mode_enabled"</span>: <span class="cmd">false</span>,
+    <span class="string">"token_rotation_enabled"</span>: <span class="cmd">false</span>
+  }
+}</pre>
                                 <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3">After creating, you still need to manually grab the <strong class="text-slate-900 dark:text-slate-100">Bot Token</strong> (OAuth & Permissions &rarr; Install to workspace &rarr; <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">xoxb-...</code>) and the <strong class="text-slate-900 dark:text-slate-100">Signing Secret</strong> (Basic Information).</p>
                             </div>
                         </div>
