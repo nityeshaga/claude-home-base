@@ -136,6 +136,19 @@ CODEX_CHANNEL_IDS = {
 }
 import bot_codex  # noqa: E402 — module-level import is fine, lazy not needed
 
+# Streaming filter for content-free heartbeat blocks ("Holding for the remaining
+# 3 batches.") — see narration_filter.py for the incident history and the
+# 63-case both-directions suite. Imported DEFENSIVELY on purpose: this is a
+# message-quality nicety, and the bot going dark is a far worse failure than one
+# extra Slack message, so an import problem degrades to no-filtering.
+try:
+    from narration_filter import is_content_free_holding  # noqa: E402
+except Exception as _nf_err:  # pragma: no cover — degraded path
+    logger.warning(f"narration_filter unavailable, holding filter OFF: {_nf_err}")
+
+    def is_content_free_holding(_text_block: str) -> bool:
+        return False
+
 # The Slack user ID of this bot — set via BOT_USER_ID env var.
 # Used to identify the bot's own messages in thread history and to prevent
 # duplicate handling of @mentions. Find it in your Slack app settings or
@@ -1233,6 +1246,14 @@ def process_message_async(event: dict) -> None:
                 return
 
         all_texts.append(text_block)
+
+        # Content-free heartbeat blocks are recorded above (so the audit trail
+        # still shows everything the model produced) but never posted. Gated on
+        # first_text_sent: only INTERSTITIAL blocks are dropped, so a turn can
+        # never go completely silent — the first block always ships.
+        if first_text_sent and is_content_free_holding(text_block):
+            logger.info(f"Holding filler suppressed (not posted): {text_block.strip()!r}")
+            return
 
         # Auto-upload any file paths mentioned
         _auto_upload_files(text_block, channel, thread_ts=thread_ts)
