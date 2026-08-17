@@ -693,12 +693,57 @@ def is_authorized(user_id: str) -> bool:
     return not AUTHORIZED_USERS or user_id in AUTHORIZED_USERS
 
 
-def log_unauthorized(event: dict) -> None:
+def _audit_user_id(event: dict) -> str:
+    """Slack puts the user id in different places depending on payload type:
+    a plain string on message events, a nested dict on block_actions bodies.
+    Reading only `event["user"]` logged `USER:{'id': 'U…'}` for button clicks."""
     user = event.get("user", "unknown")
-    channel = event.get("channel", "unknown")
-    text = event.get("text", "")[:100]
+    if isinstance(user, dict):
+        return user.get("id", "unknown")
+    return user
+
+
+def log_unlisted_user(event: dict, outcome: str) -> None:
+    """Record a message from someone outside AUTHORIZED_USERS.
+
+    `outcome` is REQUIRED and is the whole point of this function. AUTHORIZED_USERS
+    holds only the three Ring 1 names, so every Ring 2 teammate — who is fully
+    entitled to be served in a channel, and IS served — used to be written to the
+    audit log with the single label "UNAUTHORIZED". On 2026-08-16 that made 38 of
+    the day's 60 audit lines read as rejections when nothing had been rejected,
+    and the battery judge reasons off this file nightly. The behaviour was always
+    correct; only the record was wrong.
+
+    REFUSED  — a DM from an unlisted user: not answered.
+    SERVED   — a channel message from an unlisted user: answered normally.
+    """
     audit_logger.warning(
-        f'UNAUTHORIZED | USER:{user} | CHANNEL:{channel} | MSG:"{text}"'
+        f'UNLISTED_USER:{outcome} | USER:{_audit_user_id(event)} '
+        f'| CHANNEL:{event.get("channel", "unknown")} '
+        f'| MSG:"{event.get("text", "")[:100]}"'
+    )
+
+
+def log_ignored_channel(event: dict, reason: str) -> None:
+    """Record a message dropped because its channel is outside
+    ALLOWED_CHANNEL_PREFIXES.
+
+    This path used to `return` before any audit write, and log_unlisted_user
+    never fired for a Ring 1 name — so the one class of message that left ZERO
+    trace in audit.log was an AUTHORIZED supervisor posting in a non-allowed
+    channel. Mike's 2026-08-16 17:02 post in #every-one produced one bot.log
+    line and nothing here, while Dan Shipper's three minutes later produced two,
+    purely because Dan is not in AUTHORIZED_USERS. The log was blind in exactly
+    the inverted spot, so "audit.log was empty" was a claim about the logging
+    rather than about the room.
+
+    Ignoring is CORRECT behaviour — the channel is ignore-by-design. This only
+    makes the silence legible.
+    """
+    audit_logger.info(
+        f'IGNORED_CHANNEL:{reason} | USER:{_audit_user_id(event)} '
+        f'| CHANNEL:{event.get("channel", "unknown")} '
+        f'| MSG:"{event.get("text", "")[:100]}"'
     )
 
 
@@ -1148,6 +1193,7 @@ def process_message_async(event: dict) -> None:
             and not _get_channel_name(channel).startswith(ALLOWED_CHANNEL_PREFIXES)
         ):
             logger.info(f"Ignoring message in non-allowed public channel {channel} ({_get_channel_name(channel)})")
+            log_ignored_channel(event, "MESSAGE")
             return
 
         raw_text = event.get("text", "")
@@ -1460,10 +1506,13 @@ def handle_message(event, say):
     user_id = event.get("user", "")
     if not is_forwarded_reply and not is_authorized(user_id):
         if event.get("channel_type") in ("im", "mpim"):
-            log_unauthorized(event)
+            log_unlisted_user(event, "REFUSED")
             say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
             return
-        log_unauthorized(event)
+        # Falls through on purpose: a channel message from someone outside
+        # AUTHORIZED_USERS still gets served. Logged as SERVED so the audit
+        # trail stops calling answered messages rejections.
+        log_unlisted_user(event, "SERVED")
 
     # In-thread Esc: bare "stop" while a turn is running interrupts it
     if _maybe_stop_from_message(event):
@@ -1486,6 +1535,7 @@ def handle_mention(event, say):
         and not _get_channel_name(channel).startswith(ALLOWED_CHANNEL_PREFIXES)
     ):
         logger.info(f"Ignoring mention in non-allowed public channel {channel}")
+        log_ignored_channel(event, "MENTION")
         return
 
     reply_thread = event.get("thread_ts") or event.get("ts")
@@ -1493,10 +1543,13 @@ def handle_mention(event, say):
 
     if not is_forwarded_reply and not is_authorized(user_id):
         if event.get("channel_type") in ("im", "mpim"):
-            log_unauthorized(event)
+            log_unlisted_user(event, "REFUSED")
             say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
             return
-        log_unauthorized(event)
+        # Falls through on purpose: a channel message from someone outside
+        # AUTHORIZED_USERS still gets served. Logged as SERVED so the audit
+        # trail stops calling answered messages rejections.
+        log_unlisted_user(event, "SERVED")
 
     # "@bot stop" in a thread = in-thread Esc
     if _maybe_stop_from_message(event):
@@ -1547,7 +1600,7 @@ def handle_block_action(ack, body):
 
         user_id = body["user"]["id"]
         if not is_authorized(user_id):
-            log_unauthorized(body)
+            log_unlisted_user(body, "REFUSED")
             return
 
         atype = action.get("type", "")
