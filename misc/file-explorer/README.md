@@ -24,6 +24,8 @@ All settings are via environment variables:
 | `FILE_EXPLORER_PORT` | `8888` | Port to listen on |
 | `FILE_EXPLORER_NAME` | `Your AI Employee` | Display name shown in the UI |
 | `FILE_EXPLORER_TASK_PREFIXES` | _(none)_ | Comma-separated launchd label prefixes to monitor (e.g. `com.myai.,com.cc.`) |
+| `FILE_EXPLORER_BOT_DIR` | `~/Projects/slack-bot` | Slack bot directory — where `model-config.json` and the bot `.env` live (for the `/models` page) |
+| `FILE_EXPLORER_DM_USERS` | _(none)_ | DM rows on the `/models` page, `U0AAAAAAA:Alice,U0BBBBBBB:Bob` |
 
 Example with all options:
 
@@ -38,6 +40,7 @@ python3 server.py
 
 - **File browsing** with directory listing, breadcrumbs, and sidebar navigation
 - **Markdown rendering** with syntax-highlighted code blocks
+- **Models page** (`/models`, supervisors only) — which Claude model and effort answers in each Slack channel and DM, plus an optional per-model prompt. Edits the bot's `model-config.json` (autosaving, validated, backed up to `.model-config-history/`); the bot picks changes up on the next spawn, no restart needed
 - **Code viewing** with language-aware syntax highlighting (40+ extensions)
 - **HTML preview** with render/source toggle
 - **Markdown editing** directly from the browser (any `.md` file), with edit-conflict protection — if a file changes on disk (e.g. an agent edits it) while you're editing, Save surfaces an inline "Overwrite anyway / Reload file" prompt instead of silently clobbering it. Unsaved changes trigger a leave-page warning.

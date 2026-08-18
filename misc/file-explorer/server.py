@@ -13,7 +13,9 @@ Flask + Waitress edition: threaded, production-grade, handles broken pipes grace
 
 import os
 import json
+import hashlib
 import html as html_mod
+import shutil
 import mimetypes
 import urllib.parse
 import plistlib
@@ -129,6 +131,18 @@ TASK_PREFIXES = tuple(p.strip() for p in _raw_prefixes.split(",") if p.strip()) 
 # Empty task descriptions dict (users populate this)
 TASK_DESCRIPTIONS = {}
 
+# Slack bot directory — where the bot's model-config.json and .env live.
+# The /models page edits that config (which model answers in which Slack room).
+BOT_DIR = Path(os.environ.get("FILE_EXPLORER_BOT_DIR", str(BASE_DIR / "Projects" / "slack-bot")))
+
+# DM rows on the /models page: "U0AAAAAAA:Alice,U0BBBBBBB:Bob".
+# Users already named in the config file show up too.
+MODELS_DM_USERS = [
+    {"id": pair.split(":", 1)[0].strip(), "name": pair.split(":", 1)[1].strip()}
+    for pair in os.environ.get("FILE_EXPLORER_DM_USERS", "").split(",")
+    if ":" in pair
+]
+
 # File extensions to render as text
 TEXT_EXTENSIONS = {
     '.md', '.txt', '.py', '.rb', '.js', '.ts', '.jsx', '.tsx', '.json',
@@ -158,6 +172,7 @@ SIDEBAR_ICONS = {
     "CLAUDE.md": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5V17c0 .3-.2.5-.5.5H5c-.3 0-.5-.2-.5-.5V3c0-.3.2-.5.5-.5z"/><path d="M12 2.5v3.5h3.5"/><path d="M7.5 9h5"/><path d="M7.5 11.5h5"/><path d="M7.5 14h3"/></svg>',
     "Scheduled Tasks": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5v5l3.5 2"/><circle cx="10" cy="10" r=".7" fill="currentColor"/><path d="M10 3v.8"/><path d="M17 10h-.8"/><path d="M10 17v-.8"/><path d="M3 10h.8"/></svg>',
     "Conversations": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5c-1 0-1.5.5-1.5 1.5v7c0 1 .5 1.5 1.5 1.5h1v2.5l3-2.5h5c1 0 1.5-.5 1.5-1.5V6c0-1-.5-1.5-1.5-1.5z"/><path d="M7 3h9c1 0 1.5.5 1.5 1.5v6c0 1-.5 1.5-1.5 1.5h-.5"/><path d="M6 8h5.5"/><path d="M6 10.5h3.5"/></svg>',
+    "Models": '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5v7c0 .6.4 1 1 1h9.5c.6 0 1-.4 1-1v-7"/><path d="M6 6.2l4-2.7 4 2.7"/><path d="M6 11.5l4 2.7 4-2.7"/><path d="M6 8.8l4 2.7 4-2.7"/></svg>',
 }
 
 FILE_TYPE_SVGS = {
@@ -1804,6 +1819,92 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .kb-overlay-desc {
     font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary);
   }
+
+  /* ---- shared small controls (used by the Models page) ---- */
+  .steer-btn {
+    background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--text-secondary); padding: 4px 12px;
+    transition: color 150ms ease, border-color 150ms ease;
+  }
+  .steer-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .steer-link {
+    background: none; border: none; cursor: pointer; font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: .1em; color: var(--text-tertiary); padding: 0;
+    margin-left: 10px; transition: color 150ms ease;
+  }
+  .steer-link:hover { color: var(--accent); }
+  .steer-note {
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
+    margin: 12px 0 4px; letter-spacing: .04em;
+  }
+  .health-empty { font-family: var(--font-mono); font-size: 12.5px;
+    color: var(--text-tertiary); padding: 14px 0; }
+
+  /* ---- Models: which model answers in which channel ---- */
+  .models-page { max-width: 820px; padding: 8px 40px 60px; --models-cols: 208px 1fr 168px; }  /* name · model · effort; px so the 11px header and the rows share one grid */
+  .models-page h1 { font-family: Literata, serif; font-size: 28px; font-weight: 600; margin: 0 0 6px; }
+  .models-page .subtitle { font-family: var(--font-mono); font-size: 12px;
+    color: var(--text-tertiary); margin-bottom: 30px; line-height: 1.9; }
+  .models-section { margin-bottom: 44px; }
+  .models-section.default { margin-bottom: 30px; }
+  .models-section-label { font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--text-tertiary);
+    padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+  .models-section-label .hint { text-transform: none; letter-spacing: 0; font-size: 11px; text-align: right; }
+  /* column labels sit over the columns they name — same grid as the rows */
+  .models-section-label.cols { display: grid; grid-template-columns: var(--models-cols); gap: 14px; }
+  .models-section-label.cols .col { text-transform: none; letter-spacing: 0; }
+  .models-row { display: grid; grid-template-columns: var(--models-cols); align-items: center;
+    gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+  .models-name { font-family: var(--font-mono); font-size: 12.5px;
+    color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .models-name .note { font-size: 11px; color: var(--text-tertiary); }
+  /* the default row: model is read-only text (it lives in settings.json; the reason is printed inline), effort is a real dropdown */
+  .models-row.default .fixed { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .models-row.default .fixed .why { font-size: 11px; color: var(--text-tertiary); white-space: normal; line-height: 1.6; margin-top: 3px; }
+  .models-page select, .models-page input[type=text] {
+    background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 3px; font-family: var(--font-mono); font-size: 12.5px;
+    padding: 5px 8px; width: 100%; box-sizing: border-box; }
+  .models-page select:focus, .models-page input[type=text]:focus, .models-page textarea:focus {
+    outline: none; border-color: var(--accent); }
+  .models-page select.inherit { color: var(--text-tertiary); font-style: italic; }
+  .models-saved { font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--text-tertiary); text-align: right; opacity: 0;
+    transition: opacity 400ms ease; }
+  .models-saved.show { opacity: 1; color: var(--status-green); }
+  .models-saved.err { opacity: 1; color: #DE7452; text-transform: none; letter-spacing: 0; }
+  /* one save-status line for the whole page, stuck to the bottom of the view — rows don't reserve a column for it */
+  .models-status { position: sticky; bottom: 0; padding: 8px 0; background: var(--bg-primary); }
+  /* the add-a-model box is the last row of the model list */
+  .models-add { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 12px 0 10px; }
+  .models-prompt { padding: 14px 0 18px; border-bottom: 1px solid var(--border-subtle); }
+  .models-prompt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  .models-prompt-head .model { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); }
+  .models-prompt-head .where { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); text-align: right; line-height: 1.8; }
+  .models-prompt textarea { width: 100%; box-sizing: border-box; min-height: 96px; resize: vertical;
+    background: var(--bg-sidebar); color: var(--text-primary); border: 1px solid var(--border-subtle);
+    border-radius: 3px; font-family: Literata, serif; font-size: 14.5px; line-height: 1.6; padding: 10px 12px; }
+  .models-prompt textarea::placeholder { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11.5px; }
+  .models-prompt-foot { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+  .models-prompt-foot .steer-link { margin-left: 0; }
+  /* text links in the prompt section must not read as captions next to the grey where-used label */
+  .models-page .steer-link { font-size: 11px; letter-spacing: 0; color: var(--text-secondary);
+    text-decoration: underline dotted; text-underline-offset: 3px; }
+  .models-page .steer-link:hover { color: var(--accent); }
+  .models-foot { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); margin-top: 8px; }
+  .models-foot a { color: var(--text-secondary); }
+  .models-foot a:hover { color: var(--accent); }
+  @media (max-width: 720px) {
+    .models-page { padding: 8px 20px 60px; }
+    .models-section-label.cols { display: flex; }
+    .models-section-label.cols .col { display: none; }
+    .models-row { grid-template-columns: 1fr 1fr; }
+    .models-name, .models-row.default .fixed { grid-column: 1 / -1; }
+  }
 </style>
 </head>
 <body>
@@ -2506,6 +2607,11 @@ def make_sidebar(current_path='', visitor=None):
         conv_icon = SIDEBAR_ICONS['Conversations']
         links.append(f'<a href="/conversations" class="{conv_active}"><span class="icon">{conv_icon}</span>Conversations</a>')
 
+    # Models link — ring 1 only (edits the Slack bot's config)
+    if ring <= 1:
+        models_active = ' active' if current_path == 'Models' else ''
+        links.append(f'<a href="/models" class="{models_active}"><span class="icon">{SIDEBAR_ICONS["Models"]}</span>Models</a>')
+
     return "\n".join(links)
 
 
@@ -2560,6 +2666,8 @@ def _page_title(path_label):
         title = 'Conversations'
     elif path_label.startswith('Conversation: '):
         title = f'{path_label[len("Conversation: "):]} — Conversations'
+    elif path_label == 'Models':
+        title = 'Models'
     else:
         title = path_label
     return html_mod.escape(f'{title} · {DISPLAY_NAME}')
@@ -4239,6 +4347,439 @@ def _serve_file(p):
         content_type=mime,
         headers={'Content-Disposition': f'attachment; filename="{p.name}"'}
     )
+
+
+# ============================================================
+# MODELS — which mind answers in which room
+# ============================================================
+# The Slack bot reads MODEL_CONFIG_FILE fresh on every claude spawn (see
+# resolve_model_settings in bot.py). This page is the only editor.
+
+MODEL_CONFIG_FILE = BOT_DIR / 'model-config.json'
+MODEL_CONFIG_HISTORY = MODEL_CONFIG_FILE.parent / '.model-config-history'
+SLACK_BOT_ENV = MODEL_CONFIG_FILE.parent / '.env'
+EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+_MODEL_ID_RE = re.compile(r'^[A-Za-z0-9._\-\[\]]{1,80}$')
+_SLACK_CHANNEL_RE = re.compile(r'^[CDG][A-Z0-9]{6,}$')
+_SLACK_USER_RE = re.compile(r'^U[A-Z0-9]{6,}$')
+_slack_channels_cache = {'at': 0.0, 'channels': None, 'error': ''}
+_SLACK_CHANNELS_TTL = 600
+
+
+def _model_config_read():
+    """(config dict, sha256 of the raw file). Missing file → empty config, sha ''."""
+    try:
+        raw = MODEL_CONFIG_FILE.read_bytes()
+    except FileNotFoundError:
+        return {}, ''
+    try:
+        cfg = json.loads(raw)
+    except Exception:
+        cfg = {}
+    return cfg, hashlib.sha256(raw).hexdigest()
+
+
+def _settings_default_model():
+    try:
+        return json.loads((Path.home() / '.claude' / 'settings.json').read_text()).get('model', '') or ''
+    except Exception:
+        return ''
+
+
+def _validate_model_config(cfg):
+    """Return an error string, or '' when the shape is sound."""
+    if not isinstance(cfg, dict):
+        return 'config must be an object'
+    if cfg.get('default_effort') not in EFFORT_LEVELS:
+        return 'default_effort must be one of ' + ', '.join(EFFORT_LEVELS)
+    models = cfg.get('models')
+    if not isinstance(models, list) or not all(isinstance(m, str) and _MODEL_ID_RE.match(m) for m in models):
+        return 'models must be a list of model ids'
+    for section, key_re in (('channels', _SLACK_CHANNEL_RE), ('dm_users', _SLACK_USER_RE)):
+        entries = cfg.get(section, {})
+        if not isinstance(entries, dict):
+            return f'{section} must be an object'
+        for k, v in entries.items():
+            if not key_re.match(k):
+                return f'{section}: bad Slack id {k!r}'
+            if not isinstance(v, dict):
+                return f'{section}.{k} must be an object'
+            m = v.get('model', '')
+            if m and (not isinstance(m, str) or not _MODEL_ID_RE.match(m)):
+                return f'{section}.{k}: bad model {m!r}'
+            e = v.get('effort', '')
+            if e and e not in EFFORT_LEVELS:
+                return f'{section}.{k}: bad effort {e!r}'
+    prompts = cfg.get('model_prompts', {})
+    if not isinstance(prompts, dict):
+        return 'model_prompts must be an object'
+    for m, text in prompts.items():
+        if not isinstance(text, str):
+            return f'model_prompts.{m} must be text'
+        if len(text) > 20000:
+            return f'model_prompts.{m}: over 20,000 characters'
+    return ''
+
+
+def save_model_config(cfg, expected_sha):
+    """Validate, back up, write atomically. Returns (ok, payload)."""
+    err = _validate_model_config(cfg)
+    if err:
+        return False, {'error': err}
+    _, current_sha = _model_config_read()
+    if expected_sha != current_sha:
+        return False, {'error': 'config changed underneath you — reload the page', 'stale': True}
+    # keep the readme + key order stable so the file stays pleasant to read by hand
+    ordered = OrderedDict()
+    for k in ('_readme', 'default_effort', 'models', 'channels', 'dm_users', 'model_prompts'):
+        if k in cfg:
+            ordered[k] = cfg[k]
+    for k, v in cfg.items():
+        ordered.setdefault(k, v)
+    # drop empty entries so the file doesn't fill with {} rows
+    for section in ('channels', 'dm_users'):
+        ordered[section] = {k: v for k, v in ordered.get(section, {}).items()
+                            if any(v.get(f) for f in ('model', 'effort'))}
+    ordered['model_prompts'] = {k: v for k, v in ordered.get('model_prompts', {}).items() if v.strip()}
+    text = json.dumps(ordered, indent=2, ensure_ascii=False) + '\n'
+    try:
+        MODEL_CONFIG_HISTORY.mkdir(exist_ok=True)
+        if MODEL_CONFIG_FILE.exists():
+            stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+            shutil.copy2(MODEL_CONFIG_FILE, MODEL_CONFIG_HISTORY / f'model-config-{stamp}.json')
+        tmp = MODEL_CONFIG_FILE.with_suffix('.json.tmp')
+        tmp.write_text(text)
+        os.replace(tmp, MODEL_CONFIG_FILE)
+    except Exception as e:
+        return False, {'error': f'write failed: {e}'}
+    return True, {'sha': hashlib.sha256(text.encode()).hexdigest()}
+
+
+def _slack_bot_token():
+    try:
+        for line in SLACK_BOT_ENV.read_text().splitlines():
+            if line.startswith('SLACK_BOT_TOKEN='):
+                return line.split('=', 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ''
+
+
+def _slack_bot_channels():
+    """[{id, name, kind}] for every channel the bot is a member of. Cached 10 min.
+    Uses urllib against users.conversations — no slack_sdk in this interpreter."""
+    now = time.time()
+    if _slack_channels_cache['channels'] is not None and now - _slack_channels_cache['at'] < _SLACK_CHANNELS_TTL:
+        return _slack_channels_cache['channels'], _slack_channels_cache['error']
+    token = _slack_bot_token()
+    channels, error = [], ''
+    if not token:
+        error = 'no SLACK_BOT_TOKEN in the bot .env'
+    else:
+        import urllib.request
+        cursor = ''
+        try:
+            while True:
+                q = urllib.parse.urlencode({'types': 'public_channel,private_channel',
+                                            'exclude_archived': 'true', 'limit': 200, 'cursor': cursor})
+                req = urllib.request.Request('https://slack.com/api/users.conversations?' + q,
+                                             headers={'Authorization': f'Bearer {token}'})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    data = json.loads(r.read().decode())
+                if not data.get('ok'):
+                    error = f"slack: {data.get('error', 'unknown error')}"
+                    break
+                for c in data.get('channels', []):
+                    channels.append({'id': c['id'], 'name': '#' + c.get('name', c['id']),
+                                     'kind': 'private' if c.get('is_private') else 'public'})
+                cursor = (data.get('response_metadata') or {}).get('next_cursor') or ''
+                if not cursor:
+                    break
+        except Exception as e:
+            error = f'slack unreachable: {e}'
+    if channels or not error:
+        channels.sort(key=lambda c: c['name'].lower())
+        _slack_channels_cache.update(at=now, channels=channels, error=error)
+        return channels, error
+    # keep serving the last good list if Slack is flaky
+    if _slack_channels_cache['channels'] is not None:
+        return _slack_channels_cache['channels'], error
+    return [], error
+
+
+def _models_page_data():
+    cfg, sha = _model_config_read()
+    cfg.setdefault('default_effort', 'medium')
+    cfg.setdefault('models', [])
+    cfg.setdefault('channels', {})
+    cfg.setdefault('dm_users', {})
+    cfg.setdefault('model_prompts', {})
+    channels, slack_err = _slack_bot_channels()
+    channels = list(channels)
+    seen = {c['id'] for c in channels}
+    # config may reference rooms the bot has since left, or Slack may be down — still show them
+    for cid, entry in cfg['channels'].items():
+        if cid not in seen:
+            channels.append({'id': cid, 'name': entry.get('name') or cid, 'kind': 'unlisted'})
+    # every model in play is a dropdown option (and gets a prompt slot) even if someone typed it by hand
+    # into the file — including the settings.json default, which answers wherever nothing is set
+    default_model = _settings_default_model()
+    models = list(cfg['models'])
+    for entry in list(cfg['channels'].values()) + list(cfg['dm_users'].values()):
+        m = entry.get('model')
+        if m and m not in models:
+            models.append(m)
+    for m in list(cfg['model_prompts']) + ([default_model] if default_model else []):
+        if m not in models:
+            models.append(m)
+    cfg['models'] = models
+    people = list(MODELS_DM_USERS)
+    seen_people = {p['id'] for p in people}
+    for uid, dm_entry in cfg['dm_users'].items():
+        if uid not in seen_people:
+            people.append({'id': uid, 'name': dm_entry.get('name') or uid})
+    return {'config': cfg, 'sha': sha, 'channels': channels, 'people': people,
+            'default_model': default_model, 'efforts': EFFORT_LEVELS,
+            'slack_error': slack_err}
+
+
+_MODELS_JS = r"""
+(function(){
+  const D = window.MODELS_DATA; let cfg = D.config; let sha = D.sha;
+  const $ = (s, r) => (r||document).querySelector(s);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // the Default row above says what "default" is; repeating the id here only truncated it
+  // picking the model that already is the default is the default — no pinned copies, nothing to light up
+  const pick = m => (m === D.default_model ? '' : m);
+
+  function modelSelect(current){
+    let h = '<select data-field="model" class="' + (!current ? 'inherit' : '') + '">';
+    h += '<option value="">default</option>';
+    for (const m of cfg.models) if (m !== D.default_model) h += '<option value="' + esc(m) + '"' + (m===current?' selected':'') + '>' + esc(m) + '</option>';
+    return h + '</select>';
+  }
+  function effortSelect(current){
+    let h = '<select data-field="effort" class="' + (!current ? 'inherit' : '') + '">';
+    h += '<option value="">default</option>';
+    for (const e of D.efforts) h += '<option value="' + e + '"' + (e===current?' selected':'') + '>' + e + '</option>';
+    return h + '</select>';
+  }
+  // the Slack id lives in the tooltip only — nobody picks a model by id
+  function row(section, id, name, note){
+    const e = (cfg[section][id] || {});
+    return '<div class="models-row" data-section="' + section + '" data-id="' + esc(id) + '">'
+      + '<div class="models-name" title="' + esc(name + ' · ' + id) + '">' + esc(name)
+      + (note ? ' <span class="note">· ' + esc(note) + '</span>' : '') + '</div>'
+      + modelSelect(pick(e.model || '')) + effortSelect(e.effort || '') + '</div>';
+  }
+  // {used: bool, text: 'where this model answers'} — where it is set by hand, then where it lands by default
+  function whereUsed(m){
+    const set = [];
+    for (const c of D.channels) if (pick((cfg.channels[c.id]||{}).model || '') === m) set.push(c.name);
+    for (const p of D.people) if (pick((cfg.dm_users[p.id]||{}).model || '') === m) set.push(p.name + "'s DM");
+    const places = set.length ? ['set in ' + set.join(', ')] : [];
+    if (m === D.default_model) {
+      const n = D.channels.filter(c => !pick((cfg.channels[c.id]||{}).model || '')).length;
+      const dms = D.people.filter(p => !pick((cfg.dm_users[p.id]||{}).model || '')).map(p => p.name + "'s DM");
+      const parts = (n ? [n + ' channel' + (n===1?'':'s')] : []).concat(dms);
+      if (parts.length) places.push('default for ' + parts.join(' + '));
+    }
+    return {used: places.length > 0, text: places.length ? esc(places.join(' · ')) : 'not in use anywhere'};
+  }
+  // only a model nothing answers as can be removed (the settings.json default never); the label says when a prompt goes with it
+  function removeLink(m, info){
+    if (info.used || m === D.default_model) return '';
+    const label = 'remove from dropdowns' + (cfg.model_prompts[m] ? ' — deletes its prompt' : '');
+    return '<button class="steer-link" data-act="remove-model" data-model="' + esc(m) + '">' + label + '</button>';
+  }
+  const promptFoot = (m, info) => removeLink(m, info);
+  function promptBlock(m, info){
+    const t = cfg.model_prompts[m] || '';
+    return '<div class="models-prompt" data-model="' + esc(m) + '">'
+      + '<div class="models-prompt-head"><span class="model">' + esc(m) + '</span>'
+      + '<span class="where">' + info.text + '</span></div>'
+      + '<textarea spellcheck="true" placeholder="Plain text, added after CLAUDE.md whenever this model answers. Say what it needs that CLAUDE.md does not cover, e.g. &quot;Keep Slack replies to a few lines — you tend to over-explain.&quot; Saves as you type.">' + esc(t) + '</textarea>'
+      + '<div class="models-prompt-foot">' + promptFoot(m, info) + '</div></div>';
+  }
+  // re-render prompts without touching a textarea someone may be typing in
+  function renderPrompts(){
+    const box = $('#models-prompts');
+    const keep = {};
+    for (const b of box.querySelectorAll('.models-prompt')) keep[b.dataset.model] = b;
+    box.innerHTML = '';
+    for (const m of cfg.models) {
+      const info = whereUsed(m);
+      const old = keep[m];
+      if (old && $('textarea', old)) {
+        $('.where', old).innerHTML = info.text;
+        $('.models-prompt-foot', old).innerHTML = promptFoot(m, info);
+        box.appendChild(old);
+      }
+      else box.insertAdjacentHTML('beforeend', promptBlock(m, info));
+    }
+  }
+  function render(){
+    $('#models-channels').innerHTML = D.channels.map(c => row('channels', c.id, c.name, c.kind==='unlisted' ? 'not a member' : '')).join('')
+      || '<div class="health-empty">' + esc(D.slack_error || 'the bot is in no channels') + '</div>';
+    $('#models-people').innerHTML = D.people.map(p => row('dm_users', p.id, p.name, '')).join('');
+    renderPrompts();
+    $('#models-default-effort').innerHTML = D.efforts.map(e => '<option' + (e===cfg.default_effort?' selected':'') + '>' + e + '</option>').join('');
+  }
+  // one status line for every save on the page: "saved" flashes, an error stays until the next save
+  const status = $('#models-status');
+  let statusTimer;
+  function flash(text, err){
+    clearTimeout(statusTimer);
+    status.textContent = text; status.className = 'models-saved models-status ' + (err ? 'err' : 'show');
+    if (!err) statusTimer = setTimeout(() => { status.className = 'models-saved models-status'; }, 1600);
+  }
+  let saving = Promise.resolve();
+  function save(){
+    saving = saving.then(async () => {
+      const r = await fetch('/models', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({config: cfg, sha})});
+      const j = await r.json().catch(() => ({error:'bad response'}));
+      if (!r.ok) {
+        flash(j.error || 'save failed', true);
+        if (j.stale) setTimeout(() => location.reload(), 1200);
+        return false;
+      }
+      sha = j.sha; flash('saved');
+      return true;
+    });
+    return saving;
+  }
+  // prompts autosave like everything else: shortly after typing pauses, and the moment the box loses focus
+  const promptTimers = new Map();
+  function queuePrompt(blk, delay){
+    const m = blk.dataset.model;
+    clearTimeout(promptTimers.get(m));
+    promptTimers.set(m, setTimeout(() => {
+      promptTimers.delete(m);
+      const ta = $('textarea', blk); if (!ta) return;
+      if ((cfg.model_prompts[m] || '') !== ta.value) {
+        cfg.model_prompts[m] = ta.value;
+        $('.models-prompt-foot', blk).innerHTML = promptFoot(m, whereUsed(m));   // remove-link label tracks whether a prompt exists
+        save();
+      }
+    }, delay));
+  }
+  document.addEventListener('input', ev => {
+    const blk = ev.target.closest('.models-prompt');
+    if (blk && ev.target.tagName === 'TEXTAREA') queuePrompt(blk, 800);
+  });
+  document.addEventListener('focusout', ev => {
+    const blk = ev.target.closest('.models-prompt');
+    if (blk && ev.target.tagName === 'TEXTAREA') queuePrompt(blk, 0);
+  });
+  document.addEventListener('change', ev => {
+    const sel = ev.target;
+    const r = sel.closest('.models-row');
+    if (r && sel.dataset.field) {
+      const sec = r.dataset.section, id = r.dataset.id;
+      cfg[sec][id] = cfg[sec][id] || {};
+      cfg[sec][id][sel.dataset.field] = sel.value;
+      sel.classList.toggle('inherit', !sel.value);
+      save().then(renderPrompts);
+      return;
+    }
+    if (sel.id === 'models-default-effort') { cfg.default_effort = sel.value; save().then(render); }
+  });
+  document.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-act]'); if (!b) return;
+    const act = b.dataset.act;
+    if (act === 'add-model') {
+      const inp = $('#models-add-input'); const m = inp.value.trim();
+      const note = $('#models-add-saved');
+      if (!/^[A-Za-z0-9._\-\[\]]{1,80}$/.test(m)) { note.textContent = 'model ids look like claude-fable-5 or claude-opus-4-8[1m]'; note.className='models-saved err'; return; }
+      if (cfg.models.includes(m)) { note.textContent = 'already listed'; note.className='models-saved err'; return; }
+      cfg.models.push(m); inp.value = ''; note.className = 'models-saved';
+      save().then(render);
+    }
+    if (act === 'remove-model') {
+      const m = b.dataset.model;
+      if (!confirm('Remove ' + m + ' from the dropdowns?' + (cfg.model_prompts[m] ? ' Its prompt is deleted too.' : ''))) return;
+      cfg.models = cfg.models.filter(x => x !== m); delete cfg.model_prompts[m];
+      save().then(render);
+    }
+  });
+  document.getElementById('models-add-input').addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); document.querySelector('[data-act="add-model"]').click(); }
+  });
+  render();
+})();
+"""
+
+
+@app.route('/models')
+def serve_models():
+    """Which model and effort answers in each Slack channel and DM, and what each model is told."""
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return Response('Access denied — supervisors only', status=403)
+    data = _models_page_data()
+    default_model = data['default_model'] or '(none in settings.json)'
+    slack_note = ''
+    if data['slack_error']:
+        slack_note = ('<div class="steer-note">channel list: ' + html_mod.escape(data['slack_error'])
+                      + ' — showing channels from the config file only</div>')
+    payload = json.dumps(data).replace('</', '<\\/')
+    content = MODELS_PAGE_HTML.replace('__CONFIG_PATH__', str(MODEL_CONFIG_FILE)) \
+        .replace('__HISTORY_PATH__', str(MODEL_CONFIG_HISTORY)) \
+        .replace('__SETTINGS_PATH__', str(Path.home() / '.claude' / 'settings.json')) \
+        .replace('__DEFAULT_MODEL__', html_mod.escape(default_model)) \
+        .replace('__SLACK_NOTE__', slack_note) \
+        .replace('__DATA__', payload) \
+        .replace('__JS__', _MODELS_JS)
+    return _render_page('Models', content)
+
+
+MODELS_PAGE_HTML = '''<div class="models-page">
+    <h1>Models</h1>
+    <div class="subtitle">Which Claude model answers in each Slack channel and DM. Changes save on their own; new threads pick them up right away, open threads on their next reply.</div>
+    __SLACK_NOTE__
+    <div class="models-section default">
+      <div class="models-section-label cols"><span>Default</span><span class="col">model</span><span class="col">effort</span></div>
+      <div class="models-row default">
+        <div class="models-name" title="every channel and DM with no setting of its own">unless set below</div>
+        <div class="fixed">__DEFAULT_MODEL__<div class="why"><a class="steer-link" href="/browse__SETTINGS_PATH__">change in ~/.claude/settings.json</a> &mdash; it&rsquo;s the Claude default for the whole Mac, not just the bot</div></div>
+        <select id="models-default-effort"></select>
+      </div>
+    </div>
+    <div class="models-section">
+      <div class="models-section-label"><span>Channels</span></div>
+      <div id="models-channels"></div>
+    </div>
+    <div class="models-section">
+      <div class="models-section-label"><span>Direct messages</span></div>
+      <div id="models-people"></div>
+    </div>
+    <div class="models-section">
+      <div class="models-section-label"><span>Models &amp; prompts</span><span class="hint">the dropdown options &middot; a prompt goes after CLAUDE.md</span></div>
+      <div id="models-prompts"></div>
+      <div class="models-add">
+        <input type="text" id="models-add-input" placeholder="add a model id" spellcheck="false">
+        <button class="steer-btn" data-act="add-model">Add</button>
+        <span class="models-saved" id="models-add-saved" style="grid-column:1/-1;text-align:left"></span>
+      </div>
+    </div>
+    <div class="models-foot">Stored in <a href="/browse__CONFIG_PATH__">model-config.json</a> (<a href="/browse__HISTORY_PATH__">history</a>).</div>
+    <div class="models-saved models-status" id="models-status"></div>
+</div>
+<script>window.MODELS_DATA = __DATA__;</script>
+<script>__JS__</script>'''
+
+
+@app.route('/models', methods=['POST'])
+def save_models():
+    visitor = get_visitor()
+    if visitor["ring"] > 1:
+        return Response('Access denied — supervisors only', status=403)
+    body = request.get_json(silent=True) or {}
+    ok, payload = save_model_config(body.get('config'), body.get('sha', ''))
+    if not ok:
+        return jsonify(payload), (409 if payload.get('stale') else 400)
+    return jsonify(payload)
 
 
 # ============================================================

@@ -1,0 +1,26 @@
+{
+  "_readme": "Copy to model-config.json (next to bot.py). Per-channel/DM model + effort and per-model prompts for the Slack bot. The bot reads this fresh on every claude spawn (new thread or resume) — no restart needed; a thread that is already live keeps its process until it idles out. A channel or DM with no entry uses the machine-wide Claude default from ~/.claude/settings.json. The file explorer's /models page edits this file with a friendly UI.",
+  "default_effort": "medium",
+  "models": [
+    "claude-opus-4-8[1m]",
+    "claude-fable-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001"
+  ],
+  "channels": {
+    "C0EXAMPLE01": {
+      "name": "#some-channel",
+      "model": "claude-fable-5",
+      "effort": "high"
+    }
+  },
+  "dm_users": {
+    "U0EXAMPLE01": {
+      "name": "Alice",
+      "model": "claude-opus-4-8[1m]"
+    }
+  },
+  "model_prompts": {
+    "claude-fable-5": "Plain text appended to the system prompt wherever this model answers — say what it needs that CLAUDE.md does not cover."
+  }
+}

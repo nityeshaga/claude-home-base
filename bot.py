@@ -127,6 +127,53 @@ TRUST_BATTERY_DIR = os.environ.get("TRUST_BATTERY_DIR", "")
 MAX_SLACK_MSG_LEN = 3900
 PORT = int(os.environ.get("PORT", "3000"))
 
+# Per-channel/DM model + effort and per-model prompts live in model-config.json
+# next to this script (start from model-config.json.example; the file explorer's
+# /models page is a friendly editor). Read fresh on every claude spawn — no bot
+# restart needed. No file, or no entry for a room → the CLI default from
+# ~/.claude/settings.json.
+MODEL_CONFIG_FILE = Path(__file__).resolve().parent / "model-config.json"
+DEFAULT_EFFORT = "medium"
+_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+
+
+def _load_model_config() -> dict:
+    try:
+        return json.loads(MODEL_CONFIG_FILE.read_text())
+    except FileNotFoundError:
+        return {}
+    except Exception as e:  # corrupt JSON must not take the bot down
+        logger.warning(f"model-config.json unreadable ({e}); using CLI defaults")
+        return {}
+
+
+def _settings_default_model() -> str:
+    """The model claude falls back to when --model is absent (~/.claude/settings.json)."""
+    try:
+        return json.loads((Path.home() / ".claude" / "settings.json").read_text()).get("model", "") or ""
+    except Exception:
+        return ""
+
+
+def resolve_model_settings(channel_id: str, user_id: str) -> tuple[str, str, str]:
+    """(model or "" for CLI default, effort, per-model prompt or "").
+
+    DM per-user override beats the channel entry; effort falls back to default_effort.
+    The prompt is keyed by the model actually in play — including the settings.json
+    default when nothing is set — so a per-model prompt follows the model everywhere.
+    """
+    cfg = _load_model_config()
+    entry = dict(cfg.get("channels", {}).get(channel_id, {}))
+    if channel_id.startswith("D"):
+        entry.update({k: v for k, v in cfg.get("dm_users", {}).get(user_id, {}).items() if v})
+    model = entry.get("model") or ""
+    effort = entry.get("effort") or cfg.get("default_effort") or DEFAULT_EFFORT
+    if effort not in _EFFORTS:
+        logger.warning(f"bad effort {effort!r} for {channel_id}; using {DEFAULT_EFFORT}")
+        effort = DEFAULT_EFFORT
+    prompt = (cfg.get("model_prompts", {}).get(model or _settings_default_model()) or "").strip()
+    return model, effort, prompt
+
 VOTES_FILE = Path(__file__).parent / "votes.json"
 
 # The Slack user ID of this bot — set via BOT_USER_ID env var.
@@ -528,15 +575,19 @@ def _spawn_claude_process(
     cross-thread DM pattern — passing `--forward-to $CLAUDE_THREAD_TS`).
     """
     battery_context = _get_trust_battery_context()
+    model, effort, model_prompt = resolve_model_settings(channel, user_id)
     cmd = [
         "claude",
         "-p", battery_context,
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
-        "--model", "claude-opus-4-8[1m]",
-        "--effort", "medium",
+        "--effort", effort,
     ]
+    if model:
+        cmd.extend(["--model", model])
+    if model_prompt:
+        cmd.extend(["--append-system-prompt", model_prompt])
     if user_id in SUPERVISOR_USERS:
         cmd.extend(["--permission-mode", "bypassPermissions"])
     elif user_id in RESTRICTED_USERS:

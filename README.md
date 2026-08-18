@@ -35,6 +35,7 @@ CLAUDE.md.example       # Template for your AI's operations manual
 identity.md             # Your AI's soul (principles + self-authored identity)
 about-you-and-how-you-came-to-life.md  # Origin story template
 .env.example            # Configuration template
+model-config.json.example  # Per-channel/DM model + effort config template
 requirements.txt        # Python dependencies
 
 plugins/
@@ -80,6 +81,7 @@ You (anywhere) → Slack → Cloudflare Tunnel → Your Mac → Claude Code CLI
 - **Proactive messaging** — send DMs, post to channels, reply in threads via CLI
 - **Streaming output** — real-time responses as Claude generates
 - **Native tables** — markdown tables in responses render as real Slack tables (Block Kit `markdown` block)
+- **Per-room models** — `model-config.json` picks which Claude model and reasoning effort answers in each channel or DM, plus an optional per-model system prompt; read fresh on every spawn (no restart), editable from the file explorer's `/models` page
 - **Interactive buttons** — button clicks and menu picks route back into the thread's Claude session as messages, so your AI can offer approve/hold/snooze choices and act on the answer (requires Interactivity enabled in your Slack app config; Request URL = the same `/slack/events` endpoint)
 - **In-thread stop** — type a bare `stop` in a thread where the bot is mid-run to interrupt it (like Esc in the terminal); the session survives with full context, so your next message steers it in the new direction
 - **Mid-turn steering** — message a thread while the bot is mid-run and it sees your message at the next tool-call boundary, inside the same turn (like typing without Esc in the terminal); no more waiting for the whole task to finish before you can course-correct
