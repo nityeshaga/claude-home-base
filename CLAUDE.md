@@ -6,6 +6,7 @@ An open-source project that lets anyone turn a spare Mac into an always-on AI co
 
 The generalized, open-source version of CC Home Base (Luo Ji's installation). This is what Nityesh's friends and the public use. It includes:
 - `bot.py` — generic Slack bot (Flask + HTTP Events API)
+- `bot_codex.py` — optional alternate backend: drives OpenAI's `codex app-server` for rooms with `"backend": "codex"` in model-config.json (imported lazily by bot.py)
 - `CLAUDE.md.example` — template operations manual
 - `identity.md` / `about-you-and-how-you-came-to-life.md` — identity templates
 - `plugins/` — marketplace of skills (coding, creative, more-ai, chief-of-staff)

@@ -43,6 +43,8 @@ from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk import WebClient
 
+import bot_codex  # alternate backend: rooms with "backend": "codex" route here
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -155,6 +157,26 @@ def _settings_default_model() -> str:
         return ""
 
 
+def _resolve_entry(channel_id: str, user_id: str) -> dict:
+    """The merged model-config entry for a room: channel entry, with a DM
+    per-user entry layered on top (its non-empty keys win)."""
+    cfg = _load_model_config()
+    entry = dict(cfg.get("channels", {}).get(channel_id, {}))
+    if channel_id.startswith("D"):
+        entry.update({k: v for k, v in cfg.get("dm_users", {}).get(user_id, {}).items() if v})
+    return entry
+
+
+def resolve_backend(channel_id: str, user_id: str) -> str:
+    """Which engine drives this room — "claude" (default) or "codex".
+
+    A room opts into the Codex backend with `"backend": "codex"` in its
+    model-config entry; its `model` is then a Codex model (e.g. gpt-5.6-sol)
+    rather than a Claude one.
+    """
+    return (_resolve_entry(channel_id, user_id).get("backend") or "claude").lower()
+
+
 def resolve_model_settings(channel_id: str, user_id: str) -> tuple[str, str, str]:
     """(model or "" for CLI default, effort, per-model prompt or "").
 
@@ -163,9 +185,7 @@ def resolve_model_settings(channel_id: str, user_id: str) -> tuple[str, str, str
     default when nothing is set — so a per-model prompt follows the model everywhere.
     """
     cfg = _load_model_config()
-    entry = dict(cfg.get("channels", {}).get(channel_id, {}))
-    if channel_id.startswith("D"):
-        entry.update({k: v for k, v in cfg.get("dm_users", {}).get(user_id, {}).items() if v})
+    entry = _resolve_entry(channel_id, user_id)
     model = entry.get("model") or ""
     effort = entry.get("effort") or cfg.get("default_effort") or DEFAULT_EFFORT
     if effort not in _EFFORTS:
@@ -795,6 +815,36 @@ def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "")
         _live_sessions[thread_ts] = session
 
         threading.Thread(target=_reader_loop, args=(session,), daemon=True).start()
+        return session
+
+
+# Parallel registry for Codex-backed sessions (rooms with "backend": "codex").
+# Kept separate from _live_sessions so the Claude path is untouched; both are
+# consulted symmetrically when deciding whether a thread already has a session.
+_codex_sessions: dict[str, "bot_codex.CodexSession"] = {}
+_codex_sessions_lock = threading.Lock()
+
+
+def _get_or_create_codex_session(thread_ts: str, channel: str, user_id: str,
+                                 on_text, on_status=None) -> "bot_codex.CodexSession":
+    """Get an existing Codex session for this Slack thread or spawn a fresh one.
+
+    Mirrors _get_or_create_live_session but routes through bot_codex. The room's
+    Codex model comes from model-config.json (resolve_model_settings)."""
+    with _codex_sessions_lock:
+        existing = _codex_sessions.get(thread_ts)
+        if existing and existing.proc.poll() is None:
+            existing.last_activity = time.time()
+            existing._on_text = on_text
+            existing._on_status = on_status
+            return existing
+
+        model, _effort, _prompt = resolve_model_settings(channel, user_id)
+        session = bot_codex.spawn_codex_session(
+            thread_ts=thread_ts, channel=channel, user_id=user_id,
+            on_text=on_text, on_status=on_status, model=model or None,
+        )
+        _codex_sessions[thread_ts] = session
         return session
 
 
@@ -1431,10 +1481,19 @@ def process_message_async(event: dict) -> None:
 
     # For channel messages (not DMs), let Claude decide if it should respond
     is_channel = event.get("channel_type") not in ("im", "mpim")
-    has_existing_session = _get_session(thread_ts) is not None
+    # Backend-aware: a Codex-backed thread has its saved thread id / live
+    # process in the codex registries, not the Claude ones. Consult both so
+    # in-thread follow-ups on Codex rooms aren't treated as cold contact.
+    has_existing_session = (
+        _get_session(thread_ts) is not None
+        or bot_codex._load_thread_id(thread_ts) is not None
+    )
 
     # Check if there's already a live process for this thread
-    has_live_process = thread_ts in _live_sessions and _live_sessions[thread_ts].proc.poll() is None
+    has_live_process = (
+        (thread_ts in _live_sessions and _live_sessions[thread_ts].proc.poll() is None)
+        or (thread_ts in _codex_sessions and _codex_sessions[thread_ts].proc.poll() is None)
+    )
 
     # If this is a thread reply and we have no saved session AND no live process,
     # fetch the full thread history so Claude has context on what was said before.
@@ -1538,6 +1597,36 @@ def process_message_async(event: dict) -> None:
         first_text_sent = True
 
     start = time.time()
+
+    # Dispatch: Codex-backed rooms route through bot_codex; every other room
+    # falls through to the unchanged Claude path below. send_to_codex blocks
+    # until the turn completes (its own turn_lock serializes send→wait, and
+    # handles mid-turn follow-ups via turn/steer internally).
+    if resolve_backend(channel, user_id) == "codex":
+        try:
+            codex_session = _get_or_create_codex_session(
+                thread_ts=thread_ts, channel=channel, user_id=user_id, on_text=on_text,
+            )
+            bot_codex.send_to_codex(codex_session, text)
+        except Exception as e:
+            logger.error(f"Codex backend error in thread {thread_ts}: {e}")
+            try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
+            except Exception: pass
+            slack_client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text=f"Something went wrong (Codex backend): {e}",
+            )
+            return
+        try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
+        except Exception: pass
+        if skip_detected:
+            logger.info(f"Skipped message from {user_id} in {channel} (not relevant)")
+            return
+        duration = time.time() - start
+        audit_interaction(event, "\n\n".join(all_texts), duration, codex_session.codex_thread_id or "")
+        logger.info(f"Codex turn done in {duration:.1f}s for thread {thread_ts}")
+        return
+
     try:
         session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
 

@@ -30,6 +30,7 @@ A complete setup for turning a spare Mac (Mini, MacBook Air, whatever) into a de
 
 ```
 bot.py                  # Slack bot (Flask + HTTP Events API)
+bot_codex.py            # Optional Codex backend (drives `codex app-server` instead of Claude)
 index.html              # Setup guide (GitHub Pages)
 CLAUDE.md.example       # Template for your AI's operations manual
 identity.md             # Your AI's soul (principles + self-authored identity)
@@ -71,6 +72,38 @@ You (anywhere) → Slack → Cloudflare Tunnel → Your Mac → Claude Code CLI
                                               + full filesystem access
 ```
 
+## Codex backend (optional)
+
+The bot's default brain is Claude Code. You can also point individual rooms at
+OpenAI's Codex — same Slack UX, same full-access posture, a different engine
+answering. It's per-room, so a Claude channel and a Codex channel can coexist
+in one workspace (handy for side-by-side comparison).
+
+**How it works:** `bot_codex.py` drives `codex app-server` over JSON-RPC on
+stdio, mirroring the one-process-per-thread model of the Claude path. Threads
+resume across messages, output streams to Slack, and mid-turn follow-ups steer
+the running turn — exactly like the Claude backend. `bot.py` imports it lazily,
+so if you never use Codex you pay nothing.
+
+**Enable it:**
+
+1. Install the [`codex` CLI](https://github.com/openai/codex) and sign in.
+2. In `model-config.json`, add `"backend": "codex"` to any channel or DM entry,
+   with a Codex `"model"`:
+   ```json
+   "channels": {
+     "C0YOURCODEXROOM": { "name": "#codex", "backend": "codex", "model": "gpt-5.6-sol" }
+   }
+   ```
+3. (Optional) Set `CODEX_HOME` in `.env` to isolate the bot's Codex threads/auth
+   from your own interactive `codex`.
+
+**Notes:** Codex runs with approvals off and no sandbox (`danger-full-access`) —
+the equivalent of Claude's `--dangerously-skip-permissions` — because a
+Slack-driven turn has no human to answer an approval prompt. Reasoning effort
+comes from Codex's own `config.toml` (`model_reasoning_effort`), not
+model-config's `effort`.
+
 ## Bot features
 
 - **HTTP Events API** via Flask — production-standard, stateless
@@ -82,6 +115,7 @@ You (anywhere) → Slack → Cloudflare Tunnel → Your Mac → Claude Code CLI
 - **Streaming output** — real-time responses as Claude generates
 - **Native tables** — markdown tables in responses render as real Slack tables (Block Kit `markdown` block)
 - **Per-room models** — `model-config.json` picks which Claude model and reasoning effort answers in each channel or DM, plus an optional per-model system prompt; read fresh on every spawn (no restart), editable from the file explorer's `/models` page
+- **Pluggable backend** — point any room at OpenAI's Codex instead of Claude with `"backend": "codex"` in `model-config.json`; same Slack UX, different engine (see [Codex backend](#codex-backend-optional))
 - **Interactive buttons** — button clicks and menu picks route back into the thread's Claude session as messages, so your AI can offer approve/hold/snooze choices and act on the answer (requires Interactivity enabled in your Slack app config; Request URL = the same `/slack/events` endpoint)
 - **In-thread stop** — type a bare `stop` in a thread where the bot is mid-run to interrupt it (like Esc in the terminal); the session survives with full context, so your next message steers it in the new direction
 - **Mid-turn steering** — message a thread while the bot is mid-run and it sees your message at the next tool-call boundary, inside the same turn (like typing without Esc in the terminal); no more waiting for the whole task to finish before you can course-correct

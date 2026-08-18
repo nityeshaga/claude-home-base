@@ -1,17 +1,24 @@
 {
   "_readme": "Copy to model-config.json (next to bot.py). Per-channel/DM model + effort and per-model prompts for the Slack bot. The bot reads this fresh on every claude spawn (new thread or resume) — no restart needed; a thread that is already live keeps its process until it idles out. A channel or DM with no entry uses the machine-wide Claude default from ~/.claude/settings.json. The file explorer's /models page edits this file with a friendly UI.",
+  "_readme_backend": "Set \"backend\": \"codex\" on any channel/DM entry to drive that room with OpenAI's Codex (via `codex app-server`) instead of Claude. Its \"model\" is then a Codex model (e.g. gpt-5.6-sol) and \"effort\" is ignored (Codex reads reasoning effort from its own config.toml). Requires the `codex` CLI on PATH and a Codex account; see the README's 'Codex backend' section. Omit backend (or set \"claude\") for the default Claude path.",
   "default_effort": "medium",
   "models": [
     "claude-opus-4-8[1m]",
     "claude-fable-5",
     "claude-sonnet-5",
-    "claude-haiku-4-5-20251001"
+    "claude-haiku-4-5-20251001",
+    "gpt-5.6-sol"
   ],
   "channels": {
     "C0EXAMPLE01": {
       "name": "#some-channel",
       "model": "claude-fable-5",
       "effort": "high"
+    },
+    "C0EXAMPLE02": {
+      "name": "#codex-room",
+      "backend": "codex",
+      "model": "gpt-5.6-sol"
     }
   },
   "dm_users": {
