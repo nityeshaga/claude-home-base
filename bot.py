@@ -665,13 +665,17 @@ def _reader_loop(session: LiveSession) -> None:
             elif msg_type == "assistant":
                 _track_context(session, data)
                 content = data.get("message", {}).get("content", [])
+                # Subagent (Agent/Task) events stream through the same stdout
+                # with parent_tool_use_id set — their text is internal chatter,
+                # not a reply to the human. Only main-loop text reaches Slack.
+                if data.get("parent_tool_use_id"):
+                    continue
                 for block in content:
                     # Skill visibility: announce main-loop skill invocations in a
                     # grey context block (bot-side only, never enters Claude's
-                    # context). Subagent skill calls are skipped to avoid noise.
+                    # context).
                     if (isinstance(block, dict) and block.get("type") == "tool_use"
-                            and block.get("name") == "Skill"
-                            and not data.get("parent_tool_use_id")):
+                            and block.get("name") == "Skill"):
                         inp = block.get("input") or {}
                         args_str = str(inp.get("args") or "")[:120]
                         _post_skill_notice(session, inp.get("skill", "?"), args_str)
