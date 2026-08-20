@@ -19,7 +19,7 @@
       "name": "creative",
       "source": "./plugins/creative",
       "description": "Creative direction, collaborative writing, brainstorming, and discovery interviews \u2014 for projects where thinking, story, and voice matter more than code.",
-      "version": "1.3.0"
+      "version": "1.4.0"
     },
     {
       "name": "more-ai",
