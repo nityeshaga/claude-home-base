@@ -1880,11 +1880,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .models-saved.err { opacity: 1; color: #DE7452; text-transform: none; letter-spacing: 0; }
   /* one save-status line for the whole page, stuck to the bottom of the view — rows don't reserve a column for it */
   .models-status { position: sticky; bottom: 0; padding: 8px 0; background: var(--bg-primary); }
+  /* channels with a setting of their own show first; the rest fold behind this row */
+  .models-more { display: flex; align-items: center; gap: 10px; padding: 10px 0 2px; }
+  .models-more .count { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+  .models-none { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-tertiary); padding: 4px 0 2px; }
   /* the add-a-model box is the last row of the model list */
   .models-add { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 12px 0 10px; }
   .models-prompt { padding: 14px 0 18px; border-bottom: 1px solid var(--border-subtle); }
   .models-prompt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
   .models-prompt-head .model { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); }
+  .models-prompt-head .left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .models-cadence { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+    display: inline-flex; align-items: center; gap: 6px; }
+  .models-page select.cadence { padding: 2px 6px; font-size: 11px; }
+  .models-page select.cadence.off { color: var(--text-tertiary); font-style: italic; }
   .models-prompt-head .where { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); text-align: right; line-height: 1.8; }
   .models-prompt textarea { width: 100%; box-sizing: border-box; min-height: 96px; resize: vertical;
     background: var(--bg-sidebar); color: var(--text-primary); border: 1px solid var(--border-subtle);
@@ -4897,6 +4906,12 @@ def _validate_model_config(cfg):
             return f'model_prompts.{m} must be text'
         if len(text) > 20000:
             return f'model_prompts.{m}: over 20,000 characters'
+    cadence = cfg.get('model_prompt_cadence', {})
+    if not isinstance(cadence, dict):
+        return 'model_prompt_cadence must be an object'
+    for m, every in cadence.items():
+        if not isinstance(every, int) or isinstance(every, bool) or not 0 <= every <= 99:
+            return f'model_prompt_cadence.{m} must be a whole number of messages, 0-99'
     return ''
 
 
@@ -4910,7 +4925,8 @@ def save_model_config(cfg, expected_sha):
         return False, {'error': 'config changed underneath you — reload the page', 'stale': True}
     # keep the readme + key order stable so the file stays pleasant to read by hand
     ordered = OrderedDict()
-    for k in ('_readme', 'default_model', 'default_effort', 'models', 'channels', 'dm_users', 'model_prompts'):
+    for k in ('_readme', 'default_model', 'default_effort', 'models', 'channels', 'dm_users',
+              'model_prompts', 'model_prompt_cadence'):
         if k in cfg:
             ordered[k] = cfg[k]
     for k, v in cfg.items():
@@ -4920,6 +4936,9 @@ def save_model_config(cfg, expected_sha):
         ordered[section] = {k: v for k, v in ordered.get(section, {}).items()
                             if any(v.get(f) for f in ('model', 'effort'))}
     ordered['model_prompts'] = {k: v for k, v in ordered.get('model_prompts', {}).items() if v.strip()}
+    # a cadence is meaningless without a prompt to repeat, and 0 is the default
+    ordered['model_prompt_cadence'] = {k: v for k, v in ordered.get('model_prompt_cadence', {}).items()
+                                       if v and ordered['model_prompts'].get(k, '').strip()}
     text = json.dumps(ordered, indent=2, ensure_ascii=False) + '\n'
     try:
         MODEL_CONFIG_HISTORY.mkdir(exist_ok=True)
@@ -4993,6 +5012,7 @@ def _models_page_data():
     cfg.setdefault('channels', {})
     cfg.setdefault('dm_users', {})
     cfg.setdefault('model_prompts', {})
+    cfg.setdefault('model_prompt_cadence', {})
     channels, slack_err = _slack_bot_channels()
     channels = list(channels)
     seen = {c['id'] for c in channels}
@@ -5074,34 +5094,72 @@ _MODELS_JS = r"""
     return '<button class="steer-link" data-act="remove-model" data-model="' + esc(m) + '">' + label + '</button>';
   }
   const promptFoot = (m, info) => removeLink(m, info);
+  // how often the prompt is repeated to the model. It is always in the system prompt at
+  // session start; a cadence also re-sends it with every Nth message, so a standing
+  // instruction does not fade out over a long thread.
+  const CADENCES = [0, 1, 2, 3, 4, 5, 6, 8, 10];
+  function cadenceSelect(m){
+    const cur = cfg.model_prompt_cadence[m] || 0;
+    const label = n => n === 0 ? 'session start only' : n === 1 ? 'every message' : 'every ' + n + ' messages';
+    return '<label class="models-cadence">repeat '
+      + '<select class="cadence' + (cur ? '' : ' off') + '" data-cadence="' + esc(m) + '">'
+      + CADENCES.map(n => '<option value="' + n + '"' + (n === cur ? ' selected' : '') + '>' + label(n) + '</option>').join('')
+      + '</select></label>';
+  }
   function promptBlock(m, info){
     const t = cfg.model_prompts[m] || '';
     return '<div class="models-prompt" data-model="' + esc(m) + '">'
-      + '<div class="models-prompt-head"><span class="model">' + esc(m) + '</span>'
+      + '<div class="models-prompt-head"><span class="left"><span class="model">' + esc(m) + '</span>'
+      + cadenceSelect(m) + '</span>'
       + '<span class="where">' + info.text + '</span></div>'
       + '<textarea spellcheck="true" placeholder="Plain text, added after CLAUDE.md whenever this model answers. Say what it needs that CLAUDE.md does not cover, e.g. &quot;Keep Slack replies to a few lines — you tend to over-explain.&quot; Saves as you type.">' + esc(t) + '</textarea>'
       + '<div class="models-prompt-foot">' + promptFoot(m, info) + '</div></div>';
   }
   // re-render prompts without touching a textarea someone may be typing in
+  // models that carry a prompt come first — those are the ones worth reading
+  function promptOrder(){
+    const has = m => !!(cfg.model_prompts[m] || '').trim();
+    return cfg.models.filter(has).concat(cfg.models.filter(m => !has(m)));
+  }
   function renderPrompts(){
     const box = $('#models-prompts');
     const keep = {};
     for (const b of box.querySelectorAll('.models-prompt')) keep[b.dataset.model] = b;
     box.innerHTML = '';
-    for (const m of cfg.models) {
+    for (const m of promptOrder()) {
       const info = whereUsed(m);
       const old = keep[m];
       if (old && $('textarea', old)) {
         $('.where', old).innerHTML = info.text;
         $('.models-prompt-foot', old).innerHTML = promptFoot(m, info);
+        const cs = $('select.cadence', old);
+        if (cs) { cs.value = String(cfg.model_prompt_cadence[m] || 0); cs.classList.toggle('off', !cs.value.match(/[1-9]/)); }
         box.appendChild(old);
       }
       else box.insertAdjacentHTML('beforeend', promptBlock(m, info));
     }
   }
+  // a channel is worth showing up front once it has been given a model or an effort of its own
+  const isSet = c => { const e = cfg.channels[c.id] || {}; return !!(pick(e.model || '') || e.effort); };
+  let showAllChannels = false;
+  function channelRow(c){ return row('channels', c.id, c.name, c.kind==='unlisted' ? 'not a member' : ''); }
+  function renderChannels(){
+    const set = D.channels.filter(isSet), rest = D.channels.filter(c => !isSet(c));
+    if (!D.channels.length) {
+      $('#models-channels').innerHTML = '<div class="health-empty">' + esc(D.slack_error || 'the bot is in no channels') + '</div>';
+      $('#models-channels-more').hidden = true;
+      return;
+    }
+    $('#models-channels').innerHTML = set.map(channelRow).join('')
+      || '<div class="models-none">every channel is on the default</div>';
+    $('#models-channels-rest').innerHTML = rest.map(channelRow).join('');
+    $('#models-channels-rest').hidden = !showAllChannels;
+    $('#models-channels-more').hidden = !rest.length;
+    $('[data-act="toggle-channels"]').textContent = showAllChannels ? 'Hide channels on the default' : 'Show all channels';
+    $('#models-channels-count').textContent = showAllChannels ? '' : rest.length + ' on the default';
+  }
   function render(){
-    $('#models-channels').innerHTML = D.channels.map(c => row('channels', c.id, c.name, c.kind==='unlisted' ? 'not a member' : '')).join('')
-      || '<div class="health-empty">' + esc(D.slack_error || 'the bot is in no channels') + '</div>';
+    renderChannels();
     $('#models-people').innerHTML = D.people.map(p => row('dm_users', p.id, p.name, '')).join('');
     renderPrompts();
     $('#models-default-effort').innerHTML = D.efforts.map(e => '<option' + (e===cfg.default_effort?' selected':'') + '>' + e + '</option>').join('');
@@ -5159,6 +5217,14 @@ _MODELS_JS = r"""
   });
   document.addEventListener('change', ev => {
     const sel = ev.target;
+    if (sel.dataset.cadence) {
+      const every = parseInt(sel.value, 10) || 0;
+      if (every) cfg.model_prompt_cadence[sel.dataset.cadence] = every;
+      else delete cfg.model_prompt_cadence[sel.dataset.cadence];
+      sel.classList.toggle('off', !every);
+      save();
+      return;
+    }
     const r = sel.closest('.models-row');
     if (r && sel.dataset.field) {
       const sec = r.dataset.section, id = r.dataset.id;
@@ -5175,6 +5241,8 @@ _MODELS_JS = r"""
   document.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
+    // rows don't jump between the two lists while the page is open — only a re-render moves them
+    if (act === 'toggle-channels') { showAllChannels = !showAllChannels; renderChannels(); return; }
     if (act === 'add-model') {
       const inp = $('#models-add-input'); const m = inp.value.trim();
       const note = $('#models-add-saved');
@@ -5186,7 +5254,7 @@ _MODELS_JS = r"""
     if (act === 'remove-model') {
       const m = b.dataset.model;
       if (!confirm('Remove ' + m + ' from the dropdowns?' + (cfg.model_prompts[m] ? ' Its prompt is deleted too.' : ''))) return;
-      cfg.models = cfg.models.filter(x => x !== m); delete cfg.model_prompts[m];
+      cfg.models = cfg.models.filter(x => x !== m); delete cfg.model_prompts[m]; delete cfg.model_prompt_cadence[m];
       save().then(render);
     }
   });
@@ -5232,7 +5300,7 @@ def serve_models():
 
 MODELS_PAGE_HTML = '''<div class="models-page">
     <h1>Models</h1>
-    <div class="subtitle">Which Claude model answers in each Slack channel and DM. Changes save on their own; new threads pick them up right away, open threads on their next reply.</div>
+    <div class="subtitle">Which model answers in each Slack channel and DM. Changes save on their own; new threads pick them up right away, open threads on their next reply.</div>
     __SLACK_NOTE__
     <div class="models-section default">
       <div class="models-section-label cols"><span>Default</span><span class="col">model</span><span class="col">effort</span></div>
@@ -5245,6 +5313,11 @@ MODELS_PAGE_HTML = '''<div class="models-page">
     <div class="models-section">
       <div class="models-section-label"><span>Channels</span></div>
       <div id="models-channels"></div>
+      <div id="models-channels-rest" hidden></div>
+      <div class="models-more" id="models-channels-more" hidden>
+        <button class="steer-link" data-act="toggle-channels"></button>
+        <span class="count" id="models-channels-count"></span>
+      </div>
     </div>
     <div class="models-section">
       <div class="models-section-label"><span>Direct messages</span></div>

@@ -40,7 +40,7 @@ python3 server.py
 
 - **File browsing** with directory listing, breadcrumbs, and sidebar navigation
 - **Markdown rendering** with syntax-highlighted code blocks
-- **Models page** (`/models`, supervisors only) — which model and effort answers in each Slack channel and DM, plus an optional per-model prompt. The default row is a dropdown too once `model-config.json` names a `default_model`, so you can move every unconfigured room to another model from the page. Edits the bot's `model-config.json` (autosaving, validated, backed up to `.model-config-history/`); the bot picks changes up on the next spawn, no restart needed
+- **Models page** (`/models`, supervisors only) — which model and effort answers in each Slack channel and DM, plus an optional per-model prompt. The default row is a dropdown too once `model-config.json` names a `default_model`, so you can move every unconfigured room to another model from the page. Each prompt carries a repeat cadence — session start only, or re-sent with every Nth message. Channels with a setting of their own list first; the rest fold behind a "show all" row. Edits the bot's `model-config.json` (autosaving, validated, backed up to `.model-config-history/`); the bot picks changes up on the next spawn, no restart needed
 - **Comments on rendered HTML** — open any `.html` file through `/raw/...`, hit **Comment**, and click an element to pin a note to it, Figma-style. Comments are stored in a `<file>.comments.json` sidecar (the file itself is never touched) and are readable by your AI over the `/comments` endpoint, so "address the comments on this page" is a thing you can ask for
 - **Code viewing** with language-aware syntax highlighting (40+ extensions)
 - **HTML preview** with render/source toggle

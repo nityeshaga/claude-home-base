@@ -218,6 +218,24 @@ def resolve_model_settings(channel_id: str, user_id: str) -> tuple[str, str, str
     prompt = (cfg.get("model_prompts", {}).get(model or _settings_default_model()) or "").strip()
     return model, effort, prompt
 
+
+def resolve_prompt_cadence(channel_id: str, user_id: str) -> tuple[int, str]:
+    """(every-N-messages, per-model prompt) for re-injecting the prompt mid-session.
+
+    The prompt always goes in the system prompt at spawn; a cadence of N > 0 also
+    appends it to every Nth message the human sends, so a standing instruction
+    survives a long thread instead of decaying. 0 (the default) = spawn only.
+    """
+    cfg = _load_model_config()
+    entry = _resolve_entry(channel_id, user_id)
+    model = _effective_model(cfg, entry) or _settings_default_model()
+    prompt = (cfg.get("model_prompts", {}).get(model) or "").strip()
+    try:
+        every = int(cfg.get("model_prompt_cadence", {}).get(model) or 0)
+    except (TypeError, ValueError):
+        every = 0
+    return max(every, 0), prompt
+
 VOTES_FILE = Path(__file__).parent / "votes.json"
 
 # The Slack user ID of this bot — set via BOT_USER_ID env var.
@@ -500,6 +518,9 @@ class LiveSession:
     pending_reactions: list = field(default_factory=list)
     # Highest 100k context threshold already announced in the thread
     ctx_notified_level: int = 0
+    # Messages sent into this process, for the per-model prompt cadence. Resets
+    # when the thread's process is respawned after an idle-out.
+    turns_sent: int = 0
 
 
 # thread_ts → LiveSession
@@ -874,6 +895,12 @@ def _get_or_create_codex_session(thread_ts: str, channel: str, user_id: str,
 
 def _send_to_claude(session: LiveSession, text: str) -> None:
     """Send a user message to a live Claude process via stdin."""
+    session.turns_sent += 1
+    every, model_prompt = resolve_prompt_cadence(session.channel, session.user_id)
+    if model_prompt and every and session.turns_sent % every == 0:
+        text += f"\n\n[reminder]\n{model_prompt}"
+        logger.info(f"Re-injected model prompt at message {session.turns_sent} "
+                    f"in thread {session.thread_ts}")
     msg = json.dumps({
         "type": "user",
         "session_id": "",

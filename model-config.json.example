@@ -30,5 +30,9 @@
   },
   "model_prompts": {
     "claude-fable-5": "Plain text appended to the system prompt wherever this model answers — say what it needs that CLAUDE.md does not cover."
+  },
+  "_readme_cadence": "model_prompt_cadence repeats a model's prompt during a thread. The prompt is always in the system prompt at spawn; N here also appends it to every Nth message the human sends, so a standing instruction does not fade out over a long conversation. 0 or absent = spawn only. Set it on the /models page.",
+  "model_prompt_cadence": {
+    "claude-fable-5": 4
   }
 }
