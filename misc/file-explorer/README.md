@@ -40,7 +40,8 @@ python3 server.py
 
 - **File browsing** with directory listing, breadcrumbs, and sidebar navigation
 - **Markdown rendering** with syntax-highlighted code blocks
-- **Models page** (`/models`, supervisors only) — which Claude model and effort answers in each Slack channel and DM, plus an optional per-model prompt. Edits the bot's `model-config.json` (autosaving, validated, backed up to `.model-config-history/`); the bot picks changes up on the next spawn, no restart needed
+- **Models page** (`/models`, supervisors only) — which model and effort answers in each Slack channel and DM, plus an optional per-model prompt. The default row is a dropdown too once `model-config.json` names a `default_model`, so you can move every unconfigured room to another model from the page. Edits the bot's `model-config.json` (autosaving, validated, backed up to `.model-config-history/`); the bot picks changes up on the next spawn, no restart needed
+- **Comments on rendered HTML** — open any `.html` file through `/raw/...`, hit **Comment**, and click an element to pin a note to it, Figma-style. Comments are stored in a `<file>.comments.json` sidecar (the file itself is never touched) and are readable by your AI over the `/comments` endpoint, so "address the comments on this page" is a thing you can ask for
 - **Code viewing** with language-aware syntax highlighting (40+ extensions)
 - **HTML preview** with render/source toggle
 - **Markdown editing** directly from the browser (any `.md` file), with edit-conflict protection — if a file changes on disk (e.g. an agent edits it) while you're editing, Save surfaces an inline "Overwrite anyway / Reload file" prompt instead of silently clobbering it. Unsaved changes trigger a leave-page warning.
@@ -59,6 +60,21 @@ python3 server.py
 - **Infinite scroll + live view** — long conversations load older messages as you scroll; a session still being written shows a pulsing "live" indicator and streams new messages in as they arrive
 - **Minimap & table-of-contents rails** — on wide screens, a right-hand rail lists the user turns in a conversation (or the headings in a long markdown doc) with scroll-spy highlighting
 - **Per-page browser titles** and an amber open-book favicon
+
+### Comments on rendered HTML
+
+Open any `.html` file through `/raw/...`, click **Comment** in the corner, then click
+the element you want to talk about and type. The note is pinned to that element by
+CSS selector and saved in a `<file>.comments.json` sidecar — the HTML on disk is
+never modified.
+
+Your AI addresses them over the same endpoint. Worth putting in its `CLAUDE.md`:
+
+```bash
+curl -s "http://<host>:8888/comments?path=/abs/file.html"
+curl -s -X POST "http://<host>:8888/comments" -H "Content-Type: application/json" \
+  -d '{"path":"/abs/file.html","action":"resolve","id":"<id>"}'   # or "delete"
+```
 
 ## Hero image
 

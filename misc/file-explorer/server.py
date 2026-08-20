@@ -25,6 +25,7 @@ import difflib
 import threading
 import tempfile
 import time
+import uuid
 from collections import OrderedDict
 from flask import Flask, Response, redirect, request, jsonify
 from pathlib import Path
@@ -4117,6 +4118,474 @@ def serve_conversation_detail(session_id):
     return _render_page(f'Conversation: {date_str}', content)
 
 
+# ============================================================
+# COMMENTS — Figma-style pins on served .html pages
+# ------------------------------------------------------------
+# A comment is stored in a `<file>.comments.json` sidecar next to the file it
+# points at. The overlay below is injected at serve time into /raw/*.html —
+# the file on disk is never modified. Your AI reads and resolves the comments
+# with these same endpoints:
+#
+#   curl -s "http://HOST:PORT/comments?path=/abs/file.html"
+#   curl -s -X POST "http://HOST:PORT/comments" -H "Content-Type: application/json" \
+#        -d '{"path":"/abs/file.html","action":"resolve","id":"<id>"}'
+# ============================================================
+
+
+def _comments_file_for(path_str):
+    """(sidecar Path, error string) for a requested file. Error is None when allowed."""
+    p = Path(path_str).resolve()
+    try:
+        p.relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return None, 'outside the browsable directory'
+    if not is_path_allowed(str(p), get_visitor()["ring"]):
+        return None, 'not allowed'
+    return Path(str(p) + '.comments.json'), None
+
+
+@app.route('/comments', methods=['GET'])
+def get_comments():
+    sidecar, err = _comments_file_for(request.args.get('path', ''))
+    if err:
+        return jsonify([]), 403
+    if sidecar.exists():
+        try:
+            return jsonify(json.loads(sidecar.read_text()))
+        except Exception:
+            return jsonify([])
+    return jsonify([])
+
+
+@app.route('/comments', methods=['POST'])
+def save_comment():
+    try:
+        data = request.get_json() or {}
+        sidecar, err = _comments_file_for(data.get('path', ''))
+        if err:
+            return jsonify(ok=False, error=err), 403
+
+        comments = json.loads(sidecar.read_text()) if sidecar.exists() else []
+        action = data.get('action', 'add')
+
+        if action == 'add':
+            comment = {
+                'id': str(uuid.uuid4())[:8],
+                'anchor_text': data.get('anchor_text', ''),
+                'comment': data['comment'],
+                'timestamp': datetime.now().isoformat(),
+                'resolved': False,
+            }
+            # Element comments carry the CSS selector of what they point at
+            for extra in ('selector', 'snippet', 'tag'):
+                if data.get(extra):
+                    comment[extra] = data[extra]
+            comments.append(comment)
+        elif action in ('resolve', 'unresolve'):
+            for c in comments:
+                if c['id'] == data['id']:
+                    c['resolved'] = (action == 'resolve')
+                    break
+        elif action == 'delete':
+            comments = [c for c in comments if c['id'] != data['id']]
+
+        if comments:
+            sidecar.write_text(json.dumps(comments, indent=2))
+        elif sidecar.exists():
+            sidecar.unlink()  # an empty sidecar is just litter
+
+        return jsonify(ok=True, comments=comments)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+ELEMENT_COMMENT_JS = r'''
+<script>
+(function () {
+  if (window.__fxElementComments) return;
+  window.__fxElementComments = true;
+
+  var FILE_PATH = document.currentScript && document.currentScript.getAttribute('data-file-path');
+  if (!FILE_PATH) {
+    var m = document.querySelector('meta[name="fx-file-path"]');
+    FILE_PATH = m ? m.getAttribute('content') : '';
+  }
+  if (!FILE_PATH) return;
+
+  var comments = [];
+  var mode = false;
+  var hovered = null;
+  var root, toggleBtn, highlight, pinLayer, popover, orphanPanel, detail;
+
+  // ---------- styles ----------
+  var css = [
+    // The popovers/toggle/panel hang off <body>, not #fx-ec-root, so they must be named
+    // here too or they inherit the host page's box model and the textarea overflows.
+    '#fx-ec-root, #fx-ec-root *, #fx-ec-toggle, #fx-ec-toggle *, #fx-ec-pop, #fx-ec-pop *,',
+    '#fx-ec-detail, #fx-ec-detail *, #fx-ec-orphans, #fx-ec-orphans *, #fx-ec-hl',
+    '  { box-sizing: border-box; font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; }',
+    '#fx-ec-root { position: fixed; z-index: 2147483000; top: 0; left: 0; width: 0; height: 0; }',
+    '#fx-ec-toggle { position: fixed; right: 16px; bottom: 16px; z-index: 2147483001; display: inline-flex; align-items: center; gap: 7px;',
+    '  padding: 8px 13px; border-radius: 999px; border: 1px solid #3D3835; background: #1C1917; color: #D4A574;',
+    '  font-size: 12px; line-height: 1; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.35); }',
+    '#fx-ec-toggle:hover { background: #292524; }',
+    '#fx-ec-toggle.on { background: #D4A574; color: #1C1917; border-color: #D4A574; }',
+    '#fx-ec-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }',
+    '#fx-ec-hl { position: fixed; z-index: 2147482900; pointer-events: none; border: 2px solid #D4A574; border-radius: 3px;',
+    '  background: rgba(212,165,116,.10); display: none; }',
+    '.fx-ec-pin { position: fixed; z-index: 2147482950; width: 24px; height: 24px; border-radius: 50% 50% 50% 2px;',
+    '  background: #D4A574; color: #1C1917; font-size: 11px; font-weight: 700; display: flex; align-items: center;',
+    '  justify-content: center; cursor: pointer; box-shadow: 0 1px 6px rgba(0,0,0,.4); border: 1px solid #8a6a44; }',
+    '.fx-ec-pin:hover { background: #E0B88A; }',
+    '#fx-ec-pop, #fx-ec-detail { position: fixed; z-index: 2147483002; width: 268px; max-width: calc(100vw - 16px);',
+    '  max-height: calc(100vh - 16px); overflow: auto; background: #1C1917; color: #E7E5E4;',
+    '  border: 1px solid #3D3835; border-radius: 8px; padding: 11px; box-shadow: 0 6px 24px rgba(0,0,0,.5); display: none; }',
+    '#fx-ec-pop textarea { display: block; width: 100%; max-width: 100%; min-width: 0; height: 74px; margin: 0;',
+    '  resize: vertical; background: #292524; color: #E7E5E4; line-height: 1.5;',
+    '  border: 1px solid #3D3835; border-radius: 5px; padding: 7px; font-size: 12px; outline: none; }',
+    '#fx-ec-pop textarea:focus { border-color: #D4A574; }',
+    '.fx-ec-target { font-size: 10px; color: #A8A29E; margin-bottom: 7px; word-break: break-all; line-height: 1.4; }',
+    '.fx-ec-row { display: flex; gap: 7px; justify-content: flex-end; margin-top: 8px; }',
+    '.fx-ec-btn { padding: 5px 11px; border-radius: 5px; border: 1px solid #3D3835; background: #292524; color: #E7E5E4;',
+    '  font-size: 11px; cursor: pointer; }',
+    '.fx-ec-btn:hover { background: #332E2B; }',
+    '.fx-ec-btn.primary { background: #D4A574; color: #1C1917; border-color: #D4A574; }',
+    '.fx-ec-body { font-size: 12px; line-height: 1.55; white-space: pre-wrap; color: #E7E5E4; font-family: ui-serif, Literata, Georgia, serif; }',
+    '.fx-ec-meta { font-size: 10px; color: #78716C; margin-top: 6px; }',
+    '#fx-ec-orphans { position: fixed; left: 16px; bottom: 16px; z-index: 2147483001; width: 280px; background: #1C1917;',
+    '  border: 1px solid #3D3835; border-radius: 8px; color: #E7E5E4; display: none; box-shadow: 0 4px 18px rgba(0,0,0,.45); }',
+    '#fx-ec-orphans .hd { padding: 8px 11px; font-size: 11px; color: #D08770; cursor: pointer; display: flex; gap: 6px; align-items: center; }',
+    '#fx-ec-orphans .bd { display: none; max-height: 42vh; overflow: auto; border-top: 1px solid #2D2926; padding: 4px 0; }',
+    '#fx-ec-orphans.open .bd { display: block; }',
+    '#fx-ec-orphans .it { padding: 9px 11px; border-bottom: 1px solid #2D2926; }',
+    '#fx-ec-orphans .it:last-child { border-bottom: none; }',
+    '#fx-ec-orphans .tag { display: inline-block; font-size: 9px; letter-spacing: .06em; text-transform: uppercase;',
+    '  color: #D08770; border: 1px solid #D08770; border-radius: 3px; padding: 1px 5px; margin-bottom: 5px; }'
+  ].join('\n');
+
+  // ---------- selector ----------
+  function esc(s) {
+    return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/([^\w-])/g, '\\$1');
+  }
+  function cssPath(el) {
+    if (el.id) return '#' + esc(el.id);
+    var parts = [];
+    var node = el;
+    while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
+      if (node.id) { parts.unshift('#' + esc(node.id)); break; }
+      var parent = node.parentNode;
+      var idx = 1;
+      if (parent && parent.children) {
+        var n = 0;
+        for (var i = 0; i < parent.children.length; i++) {
+          var sib = parent.children[i];
+          if (sib.tagName === node.tagName) { n++; if (sib === node) idx = n; }
+        }
+      }
+      parts.unshift(node.tagName.toLowerCase() + ':nth-of-type(' + idx + ')');
+      node = parent;
+    }
+    if (!parts.length || parts[0].charAt(0) !== '#') parts.unshift('body');
+    return parts.join(' > ');
+  }
+
+  // ---------- api ----------
+  function post(payload) {
+    payload.path = FILE_PATH;
+    return fetch('/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res && res.comments) comments = res.comments;
+      render();
+      return res;
+    });
+  }
+  function load() {
+    return fetch('/comments?path=' + encodeURIComponent(FILE_PATH))
+      .then(function (r) { return r.json(); })
+      .then(function (d) { comments = Array.isArray(d) ? d : []; render(); })
+      .catch(function () { comments = []; render(); });
+  }
+
+  // ---------- render ----------
+  function elementComments() {
+    return comments.filter(function (c) { return c.selector && !c.resolved; });
+  }
+  function render() {
+    pinLayer.innerHTML = '';
+    var orphans = [];
+    var n = 0;
+    elementComments().forEach(function (c) {
+      var el = null;
+      try { el = document.querySelector(c.selector); } catch (e) { el = null; }
+      if (!el) { orphans.push(c); return; }
+      n++;
+      var pin = document.createElement('div');
+      pin.className = 'fx-ec-pin';
+      pin.textContent = n;
+      pin.setAttribute('data-id', c.id);
+      pin.title = c.comment;
+      pin._target = el;
+      pin.addEventListener('click', function (ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        showDetail(c, pin);
+      });
+      pinLayer.appendChild(pin);
+    });
+    positionPins();
+    renderOrphans(orphans);
+  }
+  function positionPins() {
+    var pins = pinLayer.children;
+    for (var i = 0; i < pins.length; i++) {
+      var pin = pins[i];
+      var el = pin._target;
+      if (!el || !el.isConnected) { pin.style.display = 'none'; continue; }
+      var r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) { pin.style.display = 'none'; continue; }
+      pin.style.display = 'flex';
+      pin.style.left = Math.max(2, r.left - 11) + 'px';
+      pin.style.top = Math.max(2, r.top - 11) + 'px';
+    }
+  }
+  function renderOrphans(list) {
+    if (!list.length) { orphanPanel.style.display = 'none'; return; }
+    orphanPanel.style.display = 'block';
+    var bd = orphanPanel.querySelector('.bd');
+    bd.innerHTML = '';
+    list.forEach(function (c) {
+      var it = document.createElement('div');
+      it.className = 'it';
+      var tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = 'element deleted';
+      var body = document.createElement('div');
+      body.className = 'fx-ec-body';
+      body.textContent = c.comment;
+      var meta = document.createElement('div');
+      meta.className = 'fx-ec-meta';
+      meta.textContent = c.selector;
+      var row = document.createElement('div');
+      row.className = 'fx-ec-row';
+      var btn = document.createElement('button');
+      btn.className = 'fx-ec-btn';
+      btn.textContent = 'Resolve';
+      btn.addEventListener('click', function () { post({ action: 'resolve', id: c.id }); });
+      row.appendChild(btn);
+      it.appendChild(tag); it.appendChild(body); it.appendChild(meta); it.appendChild(row);
+      bd.appendChild(it);
+    });
+    orphanPanel.querySelector('.hd-count').textContent = list.length;
+  }
+
+  // ---------- popovers ----------
+  function place(box, x, y) {
+    // Measure at the origin so a stale position can't shrink/wrap the box.
+    box.style.left = '0px';
+    box.style.top = '0px';
+    box.style.display = 'block';
+    var w = box.offsetWidth, h = box.offsetHeight;
+    // Clamp low LAST: if the box is taller/wider than the room below/right of the
+    // click, (innerHeight - h - 8) goes negative and must not win, or the popover
+    // gets clipped by the top/left viewport edge.
+    var left = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+    var top = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+    box.style.left = left + 'px';
+    box.style.top = top + 'px';
+  }
+  function anyPopoverOpen() {
+    return popover.style.display === 'block' || detail.style.display === 'block' ||
+      orphanPanel.classList.contains('open');
+  }
+  function insidePopover(el) {
+    return !!(el && el.closest && el.closest('#fx-ec-pop, #fx-ec-detail, #fx-ec-orphans'));
+  }
+  function hideAll() {
+    popover.style.display = 'none'; detail.style.display = 'none';
+    orphanPanel.classList.remove('open');
+  }
+
+  function openComposer(el, x, y) {
+    var selector = cssPath(el);
+    var snippet = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    popover.innerHTML = '';
+    var t = document.createElement('div');
+    t.className = 'fx-ec-target';
+    t.textContent = snippet ? snippet.slice(0, 60) : el.tagName.toLowerCase();
+    var ta = document.createElement('textarea');
+    ta.placeholder = 'Comment on this element...';
+    var row = document.createElement('div');
+    row.className = 'fx-ec-row';
+    var cancel = document.createElement('button');
+    cancel.className = 'fx-ec-btn'; cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', hideAll);
+    var save = document.createElement('button');
+    save.className = 'fx-ec-btn primary'; save.textContent = 'Save';
+    function doSave() {
+      var text = ta.value.trim();
+      if (!text) { hideAll(); return; }
+      hideAll();
+      post({
+        action: 'add',
+        comment: text,
+        selector: selector,
+        snippet: snippet,
+        tag: el.tagName.toLowerCase(),
+        anchor_text: snippet
+      });
+      setMode(false);
+    }
+    save.addEventListener('click', doSave);
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) doSave();
+      if (e.key === 'Escape') hideAll();
+    });
+    row.appendChild(cancel); row.appendChild(save);
+    popover.appendChild(t); popover.appendChild(ta); popover.appendChild(row);
+    place(popover, x + 12, y + 12);
+    ta.focus();
+  }
+
+  function showDetail(c, pin) {
+    detail.innerHTML = '';
+    var body = document.createElement('div');
+    body.className = 'fx-ec-body';
+    body.textContent = c.comment;
+    var meta = document.createElement('div');
+    meta.className = 'fx-ec-meta';
+    meta.textContent = (c.timestamp || '').slice(0, 16).replace('T', ' ');
+    var row = document.createElement('div');
+    row.className = 'fx-ec-row';
+    var close = document.createElement('button');
+    close.className = 'fx-ec-btn'; close.textContent = 'Close';
+    close.addEventListener('click', hideAll);
+    var res = document.createElement('button');
+    res.className = 'fx-ec-btn primary'; res.textContent = 'Resolve';
+    res.addEventListener('click', function () { hideAll(); post({ action: 'resolve', id: c.id }); });
+    row.appendChild(close); row.appendChild(res);
+    detail.appendChild(body); detail.appendChild(meta); detail.appendChild(row);
+    var r = pin.getBoundingClientRect();
+    place(detail, r.left + 28, r.top);
+  }
+
+  // ---------- comment mode ----------
+  function isOurs(el) { return el && el.closest && !!el.closest('#fx-ec-root, #fx-ec-toggle, #fx-ec-pop, #fx-ec-detail, #fx-ec-orphans, #fx-ec-hl'); }
+
+  function onMove(e) {
+    if (!mode) return;
+    // While a popover is open, hover-select is parked — no outlines chasing the cursor.
+    if (anyPopoverOpen()) { highlight.style.display = 'none'; hovered = null; return; }
+    var el = e.target;
+    if (isOurs(el)) { highlight.style.display = 'none'; hovered = null; return; }
+    hovered = el;
+    var r = el.getBoundingClientRect();
+    highlight.style.display = 'block';
+    highlight.style.left = r.left + 'px';
+    highlight.style.top = r.top + 'px';
+    highlight.style.width = r.width + 'px';
+    highlight.style.height = r.height + 'px';
+  }
+  // A click outside an open popover only dismisses it. It must not also open a new
+  // composer, follow a link on the host page, or start a text selection.
+  function onDown(e) {
+    if (anyPopoverOpen() && !insidePopover(e.target) && !isOurs(e.target)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+  function onClick(e) {
+    if (anyPopoverOpen() && !insidePopover(e.target)) {
+      hideAll();
+      // Our own controls (pin, toggle, orphan panel) still get their click.
+      if (!isOurs(e.target)) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (!mode) return;
+    if (isOurs(e.target)) return;
+    e.preventDefault(); e.stopPropagation();
+    openComposer(e.target, e.clientX, e.clientY);
+  }
+  function setMode(on) {
+    mode = on;
+    toggleBtn.classList.toggle('on', on);
+    toggleBtn.querySelector('.lbl').textContent = on ? 'Click an element' : 'Comment';
+    if (!on) { highlight.style.display = 'none'; }
+  }
+
+  // ---------- boot ----------
+  function init() {
+    var style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+
+    root = document.createElement('div');
+    root.id = 'fx-ec-root';
+    document.body.appendChild(root);
+
+    pinLayer = document.createElement('div');
+    root.appendChild(pinLayer);
+
+    highlight = document.createElement('div');
+    highlight.id = 'fx-ec-hl';
+    document.body.appendChild(highlight);
+
+    toggleBtn = document.createElement('button');
+    toggleBtn.id = 'fx-ec-toggle';
+    toggleBtn.innerHTML = '<span class="dot"></span><span class="lbl">Comment</span>';
+    toggleBtn.addEventListener('click', function (e) { e.stopPropagation(); hideAll(); setMode(!mode); });
+    document.body.appendChild(toggleBtn);
+
+    popover = document.createElement('div');
+    popover.id = 'fx-ec-pop';
+    document.body.appendChild(popover);
+
+    detail = document.createElement('div');
+    detail.id = 'fx-ec-detail';
+    document.body.appendChild(detail);
+
+    orphanPanel = document.createElement('div');
+    orphanPanel.id = 'fx-ec-orphans';
+    orphanPanel.innerHTML = '<div class="hd">&#9662; <span class="hd-count">0</span> comment(s) on deleted elements</div><div class="bd"></div>';
+    orphanPanel.querySelector('.hd').addEventListener('click', function () { orphanPanel.classList.toggle('open'); });
+    document.body.appendChild(orphanPanel);
+
+    document.addEventListener('mousemove', onMove, true);
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('click', onClick, true);
+    window.addEventListener('scroll', positionPins, true);
+    window.addEventListener('resize', positionPins);
+    setInterval(positionPins, 700);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { hideAll(); setMode(false); } });
+
+    load();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+'''
+
+
+def _inject_element_comments(html_text, abs_path):
+    """Inject the element-comment overlay before </body>. Never touches disk."""
+    tag = ('<meta name="fx-file-path" content="%s">\n' % html_mod.escape(str(abs_path), quote=True)
+           + ELEMENT_COMMENT_JS)
+    lower = html_text.lower()
+    idx = lower.rfind('</body>')
+    if idx != -1:
+        return html_text[:idx] + tag + html_text[idx:]
+    return html_text + tag
+
+
+
+
+
 @app.route('/raw/<path:filepath>')
 def serve_raw_file(filepath):
     """Serve a file with its native MIME type."""
@@ -4131,6 +4600,13 @@ def serve_raw_file(filepath):
     if not is_path_allowed(str(p), visitor["ring"]):
         return Response('Access denied', status=403)
     mime = mimetypes.guess_type(str(p))[0] or 'application/octet-stream'
+    # Figma-style element comments ride along on served .html (serve-time only)
+    if p.suffix.lower() in ('.html', '.htm'):
+        try:
+            html = _inject_element_comments(p.read_text(errors='replace'), p.resolve())
+            return Response(html, content_type='text/html; charset=utf-8')
+        except Exception:
+            pass
     return Response(p.read_bytes(), content_type=mime)
 
 
@@ -4392,6 +4868,9 @@ def _validate_model_config(cfg):
         return 'config must be an object'
     if cfg.get('default_effort') not in EFFORT_LEVELS:
         return 'default_effort must be one of ' + ', '.join(EFFORT_LEVELS)
+    dm = cfg.get('default_model', '')
+    if dm and (not isinstance(dm, str) or not _MODEL_ID_RE.match(dm)):
+        return f'bad default_model {dm!r}'
     models = cfg.get('models')
     if not isinstance(models, list) or not all(isinstance(m, str) and _MODEL_ID_RE.match(m) for m in models):
         return 'models must be a list of model ids'
@@ -4431,7 +4910,7 @@ def save_model_config(cfg, expected_sha):
         return False, {'error': 'config changed underneath you — reload the page', 'stale': True}
     # keep the readme + key order stable so the file stays pleasant to read by hand
     ordered = OrderedDict()
-    for k in ('_readme', 'default_effort', 'models', 'channels', 'dm_users', 'model_prompts'):
+    for k in ('_readme', 'default_model', 'default_effort', 'models', 'channels', 'dm_users', 'model_prompts'):
         if k in cfg:
             ordered[k] = cfg[k]
     for k, v in cfg.items():
@@ -4522,8 +5001,10 @@ def _models_page_data():
         if cid not in seen:
             channels.append({'id': cid, 'name': entry.get('name') or cid, 'kind': 'unlisted'})
     # every model in play is a dropdown option (and gets a prompt slot) even if someone typed it by hand
-    # into the file — including the settings.json default, which answers wherever nothing is set
-    default_model = _settings_default_model()
+    # into the file — including whichever model answers wherever nothing is set: the bot's own
+    # default_model when it names one, else the Mac-wide settings.json model
+    editable_default = bool(cfg.get('default_model'))
+    default_model = cfg.get('default_model') or _settings_default_model()
     models = list(cfg['models'])
     for entry in list(cfg['channels'].values()) + list(cfg['dm_users'].values()):
         m = entry.get('model')
@@ -4539,8 +5020,8 @@ def _models_page_data():
         if uid not in seen_people:
             people.append({'id': uid, 'name': dm_entry.get('name') or uid})
     return {'config': cfg, 'sha': sha, 'channels': channels, 'people': people,
-            'default_model': default_model, 'efforts': EFFORT_LEVELS,
-            'slack_error': slack_err}
+            'default_model': default_model, 'default_model_editable': editable_default,
+            'efforts': EFFORT_LEVELS, 'slack_error': slack_err}
 
 
 _MODELS_JS = r"""
@@ -4624,6 +5105,10 @@ _MODELS_JS = r"""
     $('#models-people').innerHTML = D.people.map(p => row('dm_users', p.id, p.name, '')).join('');
     renderPrompts();
     $('#models-default-effort').innerHTML = D.efforts.map(e => '<option' + (e===cfg.default_effort?' selected':'') + '>' + e + '</option>').join('');
+    // present only when the bot names its own default; otherwise the default is
+    // ~/.claude/settings.json, which this page does not own
+    const dm = $('#models-default-model');
+    if (dm) dm.innerHTML = cfg.models.map(m => '<option' + (m===D.default_model?' selected':'') + '>' + esc(m) + '</option>').join('');
   }
   // one status line for every save on the page: "saved" flashes, an error stays until the next save
   const status = $('#models-status');
@@ -4683,7 +5168,9 @@ _MODELS_JS = r"""
       save().then(renderPrompts);
       return;
     }
-    if (sel.id === 'models-default-effort') { cfg.default_effort = sel.value; save().then(render); }
+    if (sel.id === 'models-default-effort') { cfg.default_effort = sel.value; save().then(render); return; }
+    // moving the default moves every room that inherits it, so the whole page re-reads it
+    if (sel.id === 'models-default-model') { cfg.default_model = sel.value; D.default_model = sel.value; save().then(render); }
   });
   document.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]'); if (!b) return;
@@ -4723,11 +5210,20 @@ def serve_models():
     if data['slack_error']:
         slack_note = ('<div class="steer-note">channel list: ' + html_mod.escape(data['slack_error'])
                       + ' — showing channels from the config file only</div>')
+    if data['default_model_editable']:
+        default_cell = ('<div class="fixed" id="models-default-model-cell">'
+                        '<select id="models-default-model"></select></div>')
+    else:
+        settings_path = str(Path.home() / '.claude' / 'settings.json')
+        default_cell = (f'<div class="fixed">{html_mod.escape(default_model)}'
+                        f'<div class="why"><a class="steer-link" href="/browse{settings_path}">change in '
+                        '~/.claude/settings.json</a> &mdash; it&rsquo;s the Claude default for the '
+                        'whole Mac, not just the bot. Name a <code>default_model</code> in '
+                        'model-config.json to pick it here instead.</div></div>')
     payload = json.dumps(data).replace('</', '<\\/')
     content = MODELS_PAGE_HTML.replace('__CONFIG_PATH__', str(MODEL_CONFIG_FILE)) \
         .replace('__HISTORY_PATH__', str(MODEL_CONFIG_HISTORY)) \
-        .replace('__SETTINGS_PATH__', str(Path.home() / '.claude' / 'settings.json')) \
-        .replace('__DEFAULT_MODEL__', html_mod.escape(default_model)) \
+        .replace('__DEFAULT_CELL__', default_cell) \
         .replace('__SLACK_NOTE__', slack_note) \
         .replace('__DATA__', payload) \
         .replace('__JS__', _MODELS_JS)
@@ -4742,7 +5238,7 @@ MODELS_PAGE_HTML = '''<div class="models-page">
       <div class="models-section-label cols"><span>Default</span><span class="col">model</span><span class="col">effort</span></div>
       <div class="models-row default">
         <div class="models-name" title="every channel and DM with no setting of its own">unless set below</div>
-        <div class="fixed">__DEFAULT_MODEL__<div class="why"><a class="steer-link" href="/browse__SETTINGS_PATH__">change in ~/.claude/settings.json</a> &mdash; it&rsquo;s the Claude default for the whole Mac, not just the bot</div></div>
+        __DEFAULT_CELL__
         <select id="models-default-effort"></select>
       </div>
     </div>

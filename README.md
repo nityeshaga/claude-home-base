@@ -98,6 +98,10 @@ so if you never use Codex you pay nothing.
 3. (Optional) Set `CODEX_HOME` in `.env` to isolate the bot's Codex threads/auth
    from your own interactive `codex`.
 
+Picking a `gpt-*` / `o*` model for a room on the `/models` page is enough on its
+own — the backend is inferred from the model, so there is no second control to
+keep in sync. An explicit `"backend"` key still wins when you need it.
+
 **Notes:** Codex runs with approvals off and no sandbox (`danger-full-access`) —
 the equivalent of Claude's `--dangerously-skip-permissions` — because a
 Slack-driven turn has no human to answer an approval prompt. Reasoning effort
@@ -114,8 +118,8 @@ model-config's `effort`.
 - **Proactive messaging** — send DMs, post to channels, reply in threads via CLI
 - **Streaming output** — real-time responses as Claude generates
 - **Native tables** — markdown tables in responses render as real Slack tables (Block Kit `markdown` block)
-- **Per-room models** — `model-config.json` picks which Claude model and reasoning effort answers in each channel or DM, plus an optional per-model system prompt; read fresh on every spawn (no restart), editable from the file explorer's `/models` page
-- **Pluggable backend** — point any room at OpenAI's Codex instead of Claude with `"backend": "codex"` in `model-config.json`; same Slack UX, different engine (see [Codex backend](#codex-backend-optional))
+- **Per-room models** — `model-config.json` picks which model and reasoning effort answers in each channel or DM, plus an optional per-model system prompt; read fresh on every spawn (no restart), editable from the file explorer's `/models` page. Name a `default_model` there and the page's default row becomes a dropdown too, so you can move every unconfigured room to a different model in one pick
+- **Pluggable backend** — point any room at OpenAI's Codex instead of Claude by picking a `gpt-*` model for it on the `/models` page; same Slack UX, different engine (see [Codex backend](#codex-backend-optional))
 - **Interactive buttons** — button clicks and menu picks route back into the thread's Claude session as messages, so your AI can offer approve/hold/snooze choices and act on the answer (requires Interactivity enabled in your Slack app config; Request URL = the same `/slack/events` endpoint)
 - **In-thread stop** — type a bare `stop` in a thread where the bot is mid-run to interrupt it (like Esc in the terminal); the session survives with full context, so your next message steers it in the new direction
 - **Mid-turn steering** — message a thread while the bot is mid-run and it sees your message at the next tool-call boundary, inside the same turn (like typing without Esc in the terminal); no more waiting for the whole task to finish before you can course-correct

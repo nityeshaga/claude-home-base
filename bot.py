@@ -132,8 +132,8 @@ PORT = int(os.environ.get("PORT", "3000"))
 # Per-channel/DM model + effort and per-model prompts live in model-config.json
 # next to this script (start from model-config.json.example; the file explorer's
 # /models page is a friendly editor). Read fresh on every claude spawn — no bot
-# restart needed. No file, or no entry for a room → the CLI default from
-# ~/.claude/settings.json.
+# restart needed. No entry for a room → the config's own "default_model"; no
+# default_model either → the CLI default from ~/.claude/settings.json.
 MODEL_CONFIG_FILE = Path(__file__).resolve().parent / "model-config.json"
 DEFAULT_EFFORT = "medium"
 _EFFORTS = {"low", "medium", "high", "xhigh", "max"}
@@ -167,26 +167,50 @@ def _resolve_entry(channel_id: str, user_id: str) -> dict:
     return entry
 
 
+# Models that route through the Codex backend rather than the Claude CLI. A room
+# whose selected model matches routes to bot_codex — so picking one on the
+# /models page is all it takes to make a channel Codex-backed. An explicit
+# "backend" key in the config entry still wins (see resolve_backend).
+_CODEX_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "codex")
+
+
+def _is_codex_model(model: str) -> bool:
+    return bool(model) and model.lower().startswith(_CODEX_MODEL_PREFIXES)
+
+
+def _effective_model(cfg: dict, entry: dict) -> str:
+    """The model a room actually gets: its own, else the config's default_model,
+    else "" — meaning the CLI default from ~/.claude/settings.json."""
+    return entry.get("model") or cfg.get("default_model") or ""
+
+
 def resolve_backend(channel_id: str, user_id: str) -> str:
     """Which engine drives this room — "claude" (default) or "codex".
 
-    A room opts into the Codex backend with `"backend": "codex"` in its
-    model-config entry; its `model` is then a Codex model (e.g. gpt-5.6-sol)
-    rather than a Claude one.
+    An explicit `"backend"` in the room's model-config entry wins; otherwise the
+    engine is inferred from the model in play (a gpt-*/o* model → codex). That
+    way the single model dropdown on the /models page switches engines too, with
+    no second control to keep in sync.
     """
-    return (_resolve_entry(channel_id, user_id).get("backend") or "claude").lower()
+    cfg = _load_model_config()
+    entry = _resolve_entry(channel_id, user_id)
+    explicit = entry.get("backend")
+    if explicit:
+        return explicit.lower()
+    return "codex" if _is_codex_model(_effective_model(cfg, entry)) else "claude"
 
 
 def resolve_model_settings(channel_id: str, user_id: str) -> tuple[str, str, str]:
     """(model or "" for CLI default, effort, per-model prompt or "").
 
-    DM per-user override beats the channel entry; effort falls back to default_effort.
-    The prompt is keyed by the model actually in play — including the settings.json
-    default when nothing is set — so a per-model prompt follows the model everywhere.
+    DM per-user override beats the channel entry, which beats the config's own
+    default_model; effort falls back to default_effort. The prompt is keyed by the
+    model actually in play — including the settings.json default when nothing is
+    set anywhere — so a per-model prompt follows the model everywhere.
     """
     cfg = _load_model_config()
     entry = _resolve_entry(channel_id, user_id)
-    model = entry.get("model") or ""
+    model = _effective_model(cfg, entry)
     effort = entry.get("effort") or cfg.get("default_effort") or DEFAULT_EFFORT
     if effort not in _EFFORTS:
         logger.warning(f"bad effort {effort!r} for {channel_id}; using {DEFAULT_EFFORT}")
