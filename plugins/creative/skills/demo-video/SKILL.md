@@ -26,7 +26,7 @@ By default this tooling tends to produce a video that looks less like a demo and
 
 ### 2. Gate A — the story table (~3 min of human time)
 
-Write `STORYBOARD.md` per playbook §1 and share the scene table with the human: ~10 rows with beat, timing, **what happens (motion verbs, never frames)**, and exact on-screen copy, plus the story shape, the one global persistence rule, and the fidelity mandate. The human reacts to copy and story arc only. Wrong story here costs minutes; discovered at the end it costs the whole video.
+Write `STORYBOARD.md` per playbook §1 and share the scene table with the human: ~10 rows with beat, timing, **what happens (motion verbs, never frames)**, exact on-screen copy, and the scene's caption line (§6 — leave it blank for scenes that caption themselves), plus the story shape, the one global persistence rule, and the fidelity mandate. The human reacts to copy and story arc only. Wrong story here costs minutes; discovered at the end it costs the whole video.
 
 Surface the key text frames (the claim/kinetic-type copy) explicitly at this gate — they carry the film's voice, they're where dry humor can live, and the human will want to react to them line by line. And if the human answers with the points they'd make if *they* were explaining the feature, treat that as the find of the gate: those points are the film's text-frame skeleton — state each claim on screen and prove it with the scene that follows.
 
@@ -48,11 +48,20 @@ Write the full composition per playbook §2 and §3: one continuous camera world
 
 Share the draft-quality MP4. This is the only gate that can catch slideshow-ness — stills of a slideshow and stills of a demo look identical. Tell the human how to judge it: ignore draft-render softness, watch only the motion — does it feel like watching something happen, or frames succeeding each other; does any beat drag or land too fast; does the camera feel like one world. Include an honest self-review naming the weakest beats before they find them.
 
-### 6. Final
+### 6. Final — captions, audio, high-quality render
 
-Fix what Gate C surfaces — both the human's notes and the weaknesses you named yourself (timeline changes are cheap; draft renders take a couple of minutes, not the tens you'd budget). Then `render -q high` and share the final MP4.
+Fix what Gate C surfaces — both the human's notes and the weaknesses you named yourself (timeline changes are cheap; draft renders take a couple of minutes, not the tens you'd budget).
 
-Audio enters here, after Gate C, so motion gets judged silent first. Sound only what the story sources: BGM as a quiet underscore that fades as the wordmark lands; typing sounds only under text a human types on screen, never under the AI's replies — the AI isn't at a keyboard. Calibrate one gain across all SFX clips, and verify every audio change by measurement (LUFS/RMS windows against the previous cut), not by ear.
+**Then caption the film. Always, without being asked.** A demo has no voiceover, so a viewer meeting the product for the first time has nothing telling them what they are watching — they see a competent film and follow none of the argument. These are not transcription captions; there is no audio to transcribe. Each line states in plain language the claim its scene then proves, and it is written at Gate A alongside the rest of the copy so the human judges it at the cheap gate rather than after a render. Playbook §5 holds the rail pattern and the rules; the ones that decide whether it works:
+
+- The rail mounts **outside the camera element** — pans and push-ins must not drag it.
+- **One line at a time**, and not every scene gets one. A beat whose own on-screen type already speaks (a typed question, the endcard) stays silent, and so does every whip-pan.
+- **No ellipses.** Lines fade out completely between beats, so each has to stand alone — a trailing "…" reads as hesitation, not continuation.
+- Open a line's window only after the camera settles, and check it against whatever sits low in the frame at that moment (footers, badges) before it covers it.
+
+Audio enters here too, after Gate C, so motion gets judged silent first. Sound only what the story sources: BGM as a quiet underscore that fades as the wordmark lands; typing sounds only under text a human types on screen, never under the AI's replies — the AI isn't at a keyboard. Calibrate one gain across all SFX clips, and verify every audio change by measurement (LUFS/RMS windows against the previous cut), not by ear.
+
+Then `render -q high`, twice: `final-captioned.mp4` and the clean `final.mp4` with the rail disabled. Ship both — the clean cut is what you want wherever the page already carries copy around the video. Frame-grab QA covers every caption in and out boundary, not just the middle of each window, and you look at the shipping file yourself before it reaches the human.
 
 ## The anti-slideshow doctrine (the main thing)
 
