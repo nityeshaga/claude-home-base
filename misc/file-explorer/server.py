@@ -7,11 +7,17 @@ Configuration via environment variables:
   FILE_EXPLORER_PORT       — port to listen on (default: 8888)
   FILE_EXPLORER_NAME       — display name for your AI employee (default: "Your AI Employee")
   FILE_EXPLORER_TASK_PREFIXES — comma-separated launchd label prefixes to monitor (default: none)
+  FILE_EXPLORER_COMMENT_AUTHORS — names for the inline-comment author picker, "Alice,Bob"
+  FILE_EXPLORER_ASSISTANT_NAME — name for the assistant in transcripts (default: FILE_EXPLORER_NAME)
+  FILE_EXPLORER_SLACK_USERS   — Slack IDs mapped to names, "U0AAAAAAA:Alice,U0BBBBBBB:Bob"
+  FILE_EXPLORER_SLACK_TEAM    — Slack workspace subdomain, for deep links back to a thread
+  FILE_EXPLORER_SCHEDULED_PHRASES — prompt phrases that mark a session as a scheduled run
 
 Flask + Waitress edition: threaded, production-grade, handles broken pipes gracefully.
 """
 
 import os
+import sys
 import json
 import hashlib
 import html as html_mod
@@ -36,6 +42,20 @@ app = Flask(__name__)
 BASE_DIR = Path(os.environ.get("FILE_EXPLORER_BASE_DIR", str(Path.home())))
 PORT = int(os.environ.get("FILE_EXPLORER_PORT", "8888"))
 DISPLAY_NAME = os.environ.get("FILE_EXPLORER_NAME", "Your AI Employee")
+
+# Names offered in the inline-comment author picker.
+COMMENT_AUTHORS = [n.strip() for n in
+                   os.environ.get("FILE_EXPLORER_COMMENT_AUTHORS", "").split(",") if n.strip()]
+# What to call the assistant in a rendered transcript.
+ASSISTANT_NAME = os.environ.get("FILE_EXPLORER_ASSISTANT_NAME", DISPLAY_NAME)
+# Slack user IDs -> display names, so transcripts read as names, not raw IDs.
+# Format: "U0AAAAAAA:Alice,U0BBBBBBB:Bob"
+SLACK_ID_NAMES = dict(
+    pair.split(":", 1) for pair in
+    os.environ.get("FILE_EXPLORER_SLACK_USERS", "").split(",") if ":" in pair
+)
+# Slack workspace subdomain, for deep-linking a transcript back to its thread.
+SLACK_TEAM_DOMAIN = os.environ.get("FILE_EXPLORER_SLACK_TEAM", "")
 
 # All .md files are editable via the browser UI
 
@@ -1368,6 +1388,268 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .hljs-attr, .hljs-attribute { color: #EBCB8B !important; }
 
   /* ============================================================
+     Inline comments — margin rail (Study aesthetic, Docs interaction)
+     Desktop: cards live in a rail beside the 720px prose column, parked
+     next to their anchor. Mobile (<=900px): numbered markers + bottom sheet.
+     ============================================================ */
+
+  /* layout: prose column + rail */
+  .md-page { display: flex; gap: 36px; align-items: flex-start; }
+  /* Prose yields width before the row can overflow; it never grows past 720. */
+  .md-page > .markdown-body { flex: 0 1 720px; min-width: 480px; max-width: 720px; }
+  .comment-rail {
+    flex: 1 1 auto; min-width: 200px; max-width: 340px; position: relative;
+    border-left: 1px solid var(--border-subtle); padding-left: 24px;
+    font-family: var(--font-prose);
+  }
+  .comment-rail.empty { border-left-color: transparent; }
+
+  /* Markdown pages can carry a fixed .nav-rail outline pinned to the viewport
+     edge. Three columns — prose | margin notes | spine — only genuinely fit at
+     1440px and up, so that is the only place the gutter is reserved. Below it
+     the outline yields rather than being painted over: an index is a
+     convenience, the margin notes are the work. A doc with no comments keeps
+     its outline at every width, because nothing is competing for the space. */
+  @media (min-width: 1440px) {
+    /* the spine is an index, not a reading column, so it gives up width here:
+       150px vs the conversation minimap's 200px */
+    body.has-outline.has-comments .nav-rail { width: 150px; }
+    body.has-outline.has-comments .file-content { padding-right: 182px; }
+    body.has-outline.has-comments .md-page { gap: 28px; }
+  }
+  @media (max-width: 1439px) {
+    body.has-outline.has-comments .nav-rail { display: none; }
+  }
+
+  /* anchors in the prose */
+  .comment-highlight {
+    border-bottom: 1.5px dotted var(--accent);
+    cursor: pointer;
+    background: transparent;
+    color: inherit;
+    border-radius: 0;
+    transition: background 150ms ease, border-bottom-color 150ms ease;
+  }
+  .comment-highlight.warm {
+    background: rgba(212, 165, 116, 0.14);
+    border-bottom-color: var(--accent-hover);
+  }
+  .comment-highlight.resolved { border-bottom-color: var(--text-tertiary); opacity: 0.5; }
+  /* the live selection, while its composer is open */
+  .comment-highlight.pending {
+    background: rgba(212, 165, 116, 0.20);
+    border-bottom: 1.5px solid var(--accent);
+    cursor: default;
+  }
+
+  /* rail cards */
+  .cmt-card {
+    position: absolute; left: 24px; right: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-left: 2px solid var(--border);
+    border-radius: 6px;
+    padding: 13px 14px 11px;
+    transition: border-color 150ms ease, background 150ms ease, margin 150ms ease;
+  }
+  .cmt-card .who {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px;
+  }
+  .cmt-card .when { color: var(--text-tertiary); }
+  .cmt-card .body { font-size: 14px; line-height: 1.6; color: var(--text-primary); white-space: pre-wrap; }
+  .cmt-card .quote {
+    font-size: 13px; font-style: italic; color: var(--text-secondary);
+    border-left: 2px solid var(--border); padding-left: 10px; margin: 9px 0 0;
+  }
+  .cmt-card .foot {
+    margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-mono); font-size: 11px;
+    display: flex; gap: 16px; align-items: center;
+  }
+  .cmt-card .foot a { color: var(--text-tertiary); text-decoration: none; cursor: pointer; }
+  .cmt-card .foot a:hover { color: var(--accent); }
+  .cmt-card .foot a.danger:hover { color: #f85149; }
+
+  /* warm = linked hover, both directions; active also leans toward the text */
+  .cmt-card.warm {
+    border-color: var(--border);
+    border-left-color: var(--accent);
+    background: var(--bg-elevated);
+  }
+  .cmt-card.active { margin-left: -14px; margin-right: 14px; }
+
+  /* composer */
+  .cmt-card.composer {
+    border-left-color: var(--accent);
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    margin-left: -14px; margin-right: 14px;
+  }
+  .cmt-card.composer textarea {
+    width: 100%; box-sizing: border-box; min-height: 74px; resize: vertical;
+    background: var(--bg-sidebar); color: var(--text-primary);
+    border: 1px solid var(--accent); border-radius: 4px; padding: 8px 9px;
+    font-family: var(--font-prose); font-size: 14px; line-height: 1.5;
+    outline: none;
+  }
+  .cmt-card.composer textarea::placeholder { color: var(--text-tertiary); }
+  .cmt-card .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .cmt-btn {
+    font-family: var(--font-mono); font-size: 12px; padding: 5px 12px; border-radius: 4px;
+    border: 1px solid var(--border); cursor: pointer; background: var(--bg-elevated);
+    color: var(--text-primary);
+  }
+  .cmt-btn:hover { background: var(--bg-surface); }
+  .cmt-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg-primary); }
+  .cmt-btn.primary:hover { background: var(--accent-hover); }
+
+  /* author picker (asked once per browser, no auth exists) */
+  .cmt-who-pick {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+    display: flex; align-items: center; gap: 8px; margin-bottom: 9px;
+  }
+  .cmt-who-pick .cmt-btn { padding: 3px 10px; font-size: 11px; }
+
+  /* rail sections: orphans + resolved */
+  .cmt-section { position: absolute; left: 24px; right: 0; }
+  .cmt-section .hd {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ember); margin-bottom: 9px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .cmt-section .hd::after { content: ''; flex: 1; height: 1px; background: var(--border-subtle); }
+  .cmt-section.quiet .hd { color: var(--text-tertiary); }
+  .cmt-card.orphan { position: static; border-left-color: var(--ember); margin-bottom: 10px; }
+  .cmt-card.orphan .quote { border-left-color: #6B4A3E; color: var(--text-tertiary); }
+  .cmt-tag {
+    display: inline-block; font-family: var(--font-mono); font-size: 9px;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--ember);
+    border: 1px solid var(--ember); border-radius: 3px; padding: 1px 5px; margin-bottom: 7px;
+  }
+  .cmt-card.resolved {
+    position: static; opacity: .42; border-left-color: var(--border-subtle);
+    background: transparent; padding: 10px 14px 9px; margin-bottom: 4px;
+  }
+  .cmt-card.resolved:hover { opacity: .85; background: var(--bg-surface); }
+  .cmt-card.resolved .body { font-size: 13px; color: var(--text-secondary); }
+  .cmt-check { color: var(--status-green); font-family: var(--font-mono); font-size: 11px; }
+
+  /* count badge in the edit bar */
+  .comment-badge {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    transition: background 150ms ease;
+  }
+  .comment-badge:hover { background: var(--bg-elevated); color: var(--accent-hover); }
+
+  /* ---------- mobile: markers + bottom sheet ---------- */
+  .cmt-marker {
+    display: none;
+    vertical-align: super;
+    font-family: var(--font-mono); font-size: 9px; line-height: 15px;
+    width: 15px; height: 15px; text-align: center; border-radius: 50%;
+    background: var(--accent); color: var(--bg-primary); margin-left: 3px;
+    cursor: pointer; user-select: none;
+  }
+  .cmt-marker.done { background: var(--bg-elevated); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--border); }
+
+  .cmt-bottomstack {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 180;
+    display: none;
+  }
+  .cmt-sheet {
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    padding: 10px 18px 22px;
+    max-height: 68vh; overflow-y: auto;
+    box-shadow: 0 -6px 24px rgba(0,0,0,.45);
+  }
+  .cmt-sheet .grip {
+    width: 38px; height: 4px; border-radius: 2px; background: var(--border);
+    margin: 0 auto 14px;
+  }
+  .cmt-sheet .who {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+    display: flex; justify-content: space-between; margin-bottom: 8px;
+  }
+  .cmt-sheet .who .when { color: var(--text-tertiary); }
+  .cmt-sheet .quote {
+    font-size: 13px; font-style: italic; color: var(--text-secondary);
+    border-left: 2px solid var(--accent); padding-left: 11px; margin: 0 0 13px;
+  }
+  .cmt-sheet .body { font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+  .cmt-sheet .acts {
+    margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle);
+    display: flex; gap: 22px; align-items: center;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
+  }
+  .cmt-sheet .acts a { color: var(--text-tertiary); text-decoration: none; cursor: pointer; }
+  .cmt-sheet .acts a:hover { color: var(--accent); }
+  .cmt-sheet .nav { margin-left: auto; display: flex; gap: 12px; align-items: center; color: var(--text-tertiary); }
+  .cmt-sheet .nav span { cursor: pointer; }
+  .cmt-sheet textarea {
+    width: 100%; box-sizing: border-box; min-height: 78px; resize: none;
+    background: var(--bg-sidebar); color: var(--text-primary);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 10px 11px;
+    font-family: var(--font-prose); font-size: 15px; line-height: 1.5; outline: none;
+  }
+  .cmt-sheet .btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+  .cmt-sheet .cmt-btn { font-size: 13px; padding: 8px 16px; }
+
+  .cmt-chip {
+    margin: 0 auto 12px; width: max-content;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-elevated); border: 1px solid var(--ember);
+    color: var(--ember); border-radius: 18px; padding: 7px 15px;
+    font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap;
+    cursor: pointer;
+  }
+  .cmt-chip .n {
+    background: var(--ember); color: var(--bg-primary); border-radius: 9px;
+    padding: 0 6px; font-size: 10px; line-height: 15px;
+  }
+
+  /* Selecting text offers a quiet comment mark beside the selection. Clicking it
+     opens the composer — selecting to read or copy leaves no residue. Same mark
+     on both platforms; only its size and placement change on touch. */
+  .cmt-addmark {
+    position: fixed; display: none; z-index: 190;
+    width: 26px; height: 26px; padding: 4px; margin: 0;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: 5px; color: var(--text-secondary); cursor: pointer;
+    line-height: 0;
+    -webkit-appearance: none; appearance: none;   /* it's a <button> */
+    touch-action: manipulation;                   /* no 300ms tap delay on iOS */
+    transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+  }
+  .cmt-addmark:hover {
+    color: var(--accent); border-color: var(--accent); background: var(--bg-elevated);
+  }
+  .cmt-addmark svg { display: block; width: 100%; height: 100%; }
+  /* Touch: a 44px target (Apple's minimum), and loud enough to read as tappable
+     next to iOS's own selection callout. */
+  .cmt-addmark.touch {
+    width: 44px; height: 44px; padding: 10px; border-radius: 22px;
+    background: var(--bg-elevated); border-color: var(--accent); color: var(--accent);
+    box-shadow: 0 2px 12px rgba(0,0,0,.45);
+  }
+
+  @media (max-width: 900px) {
+    .md-page { display: block; }
+    .md-page > .markdown-body { flex: none; width: auto; min-width: 0; max-width: 100%; }
+    .comment-rail { display: none; }
+    .cmt-marker { display: inline-block; }
+  }
+
+  /* ============================================================
      CONVERSATIONS TAB
      ============================================================ */
 
@@ -1452,7 +1734,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .conv-row .conv-size {
     font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary);
-    min-width: 56px; text-align: right; flex-shrink: 0;
+    min-width: 128px; text-align: right; flex-shrink: 0; white-space: nowrap;
   }
 
   /* Source badge chips + noise filter */
@@ -1466,6 +1748,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .conv-badge.kind-dm { background: rgba(134, 239, 172, 0.1); color: var(--status-green); }
   .conv-badge.kind-scheduled { background: var(--bg-elevated); color: var(--text-tertiary); }
   .conv-badge.kind-terminal { background: transparent; color: var(--text-secondary); border-color: var(--border); }
+  .conv-badge.kind-operator { background: rgba(167, 139, 250, 0.14); color: #a78bfa; }
 
   .conv-filter-bar {
     display: flex; gap: 8px; align-items: center;
@@ -1486,7 +1769,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   /* Filter modes toggle row visibility via container class */
   .conv-index.filter-conversations .conv-row[data-kind="scheduled"] { display: none; }
   .conv-index.filter-scheduled .conv-row:not([data-kind="scheduled"]) { display: none; }
-
   /* Detail page */
   .conv-detail { max-width: 760px; margin: 0 auto; }
   .conv-detail-back {
@@ -1656,6 +1938,48 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .conv-message.role-user .conv-role-label { color: var(--accent); }
   .conv-role-label .conv-ts { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.6; font-size: 10px; }
+  /* Tool-result-only user turns are part of the tool exchange, not "YOU" */
+  .conv-message.role-tool-result { margin-top: -6px; }
+  .conv-message.role-tool-result .conv-role-label { color: var(--text-tertiary); }
+  /* Empty thinking (encrypted by model): single muted marker, no expandable UI */
+  .conv-thinking-empty {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+    font-style: italic; opacity: 0.7; padding: 2px 0 4px;
+  }
+  /* Full tool I/O: lazy-loaded, pretty-printed, scrollable */
+  details.tool-full { margin-top: 8px; }
+  details.tool-full > summary {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+    cursor: pointer; user-select: none; list-style: none; display: inline-flex;
+    align-items: center; gap: 5px; padding: 2px 6px; border: 1px solid var(--border-subtle);
+    border-radius: 5px;
+  }
+  details.tool-full > summary::before { content: '{ }'; opacity: 0.6; font-size: 10px; }
+  details.tool-full > summary:hover { color: var(--text-secondary); border-color: var(--border); }
+  details.tool-full[open] > summary { color: var(--text-secondary); }
+  .tool-full-pre {
+    max-height: 420px; overflow: auto; margin: 6px 0 0;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--bg-sidebar); border: 1px solid var(--border-subtle);
+    border-radius: 6px; padding: 10px 12px; color: var(--text-secondary);
+  }
+  /* Delegation: link from an Agent tool call to its sidechain transcript */
+  .agent-link {
+    font-family: var(--font-mono); font-size: 11px; color: #a78bfa;
+    text-decoration: none; white-space: nowrap; flex-shrink: 0;
+  }
+  .agent-link:hover { text-decoration: underline; }
+  /* Boot header: model + battery metadata strip */
+  .conv-boot-strip {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin: 10px 0 0;
+  }
+  .boot-chip {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+    border: 1px solid var(--border-subtle); border-radius: 5px; padding: 3px 8px;
+  }
+  .boot-chip.boot-battery { color: #a78bfa; border-color: rgba(167, 139, 250, 0.3); }
 
   /* Load more button */
   .conv-load-more {
@@ -2097,6 +2421,782 @@ if (editBtn) {
 
   saveBtn.addEventListener('click', () => doSave(false));
 }
+
+// --- FX: listener/timer helpers used by the conversation + comment UI ---
+(function () {
+  if (window.FX) return;
+  window.FX = {
+    go: function (url) { window.location = url; },
+    on: function (t, type, fn, opts) { t.addEventListener(type, fn, opts); return fn; },
+    every: function (ms, fn) { return setInterval(fn, ms); },
+    after: function (ms, fn) { return setTimeout(fn, ms); },
+    watch: function (o) { return o; }
+  };
+})();
+
+// ============================================================
+// INLINE COMMENT SYSTEM
+// Desktop: a margin rail beside the prose, cards parked next to their anchor
+// (Google Docs behaviour). Mobile (<=900px): numbered markers + a bottom sheet.
+// Comments that can no longer find their anchor text are shown as "text
+// changed" rather than silently dropped.
+// ============================================================
+(function() {
+  var fileContent = document.querySelector('.file-content[data-file-path]');
+  var mdRendered = document.getElementById('markdown-rendered');
+  var rail = document.getElementById('comment-rail');
+  if (!fileContent || !mdRendered || !rail) return;
+
+  var filePath = fileContent.dataset.filePath;
+  var badge = document.getElementById('comment-badge');
+
+  var MOBILE_MAX = 900;
+  var AUTHOR_KEY = 'fe-comment-author';
+  var AUTHORS = COMMENT_AUTHORS_JSON;
+
+  var comments = [];        // server truth
+  var placed = {};          // comment id -> {first: mark, last: mark}
+  var cards = {};           // comment id -> rail card element
+  var orphans = [];         // comment objects whose anchor text is gone
+  var composer = null;      // {anchorText, paragraphPrefix, mark, el}
+  var order = [];           // ids in reading order, for the mobile < n of N > walk
+  var sheetId = null;
+
+  var stack = null, sheet = null, chip = null, addMark = null;
+
+  function isMobile() { return window.innerWidth <= MOBILE_MAX; }
+  function isEditing() {
+    var ea = document.getElementById('edit-area');
+    return !!(ea && ea.style.display !== 'none');
+  }
+
+  // --- small helpers ---
+  function mk(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+  function link(text, cls, fn) {
+    var a = mk('a', cls || null, text);
+    a.addEventListener('click', function(ev) { ev.preventDefault(); ev.stopPropagation(); fn(); });
+    return a;
+  }
+  function timeAgo(isoStr) {
+    if (!isoStr) return '';
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '';
+    var diff = Math.floor((new Date() - d) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 172800) return 'yesterday';
+    if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function quoted(s) {
+    s = (s || '').replace(/\s+/g, ' ').trim();
+    if (s.length > 160) s = s.slice(0, 158) + '…';
+    return '“' + s + '”';
+  }
+
+  // --- author (no auth exists; ask once per browser) ---
+  function getAuthor() {
+    try { return localStorage.getItem(AUTHOR_KEY) || ''; } catch (e) { return ''; }
+  }
+  function setAuthor(name) {
+    try { localStorage.setItem(AUTHOR_KEY, name); } catch (e) {}
+  }
+
+  // --- api ---
+  function fetchComments() {
+    return fetch('/comments?path=' + encodeURIComponent(filePath))
+      .then(function(r) { return r.json(); })
+      .then(function(data) { comments = data || []; render(); })
+      .catch(function() { comments = []; render(); });
+  }
+  function postComment(action, payload) {
+    payload.path = filePath;
+    payload.action = action;
+    return fetch('/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(result) {
+      if (result.ok) { comments = result.comments || []; render(); }
+      return result;
+    });
+  }
+
+  // ============================================================
+  // Anchoring: find the comment's text in the rendered prose and wrap it.
+  // Returns {first, last} marks, or null when the text is no longer there.
+  // (Unchanged matching rules — existing sidecars must keep resolving.)
+  // ============================================================
+  function findAndMarkText(root, searchText, commentId, extraClass) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var textNodes = [];
+    var node;
+    while (node = walker.nextNode()) {
+      var p = node.parentNode;
+      if (p.closest && (p.closest('pre') || p.closest('code'))) continue;
+      textNodes.push(node);
+    }
+
+    var searchNorm = searchText.replace(/\s+/g, ' ').trim();
+    if (!searchNorm) return null;
+
+    for (var i = 0; i < textNodes.length; i++) {
+      var combined = '';
+      var nodeSpans = [];
+      for (var j = i; j < textNodes.length && combined.length < searchNorm.length + 200; j++) {
+        var start = combined.length;
+        combined += textNodes[j].textContent;
+        nodeSpans.push({ node: textNodes[j], start: start, end: combined.length });
+      }
+
+      var combinedNorm = combined.replace(/\s+/g, ' ');
+      var matchIdx = combinedNorm.indexOf(searchNorm);
+      if (matchIdx === -1) continue;
+
+      // Try exact match first, fall back to normalized
+      var idx = combined.indexOf(searchText);
+      if (idx === -1) idx = matchIdx;
+      var endIdx = idx + searchText.length;
+
+      var firstMark = null, lastMark = null;
+      for (var k = 0; k < nodeSpans.length; k++) {
+        var ns = nodeSpans[k];
+        if (ns.end <= idx || ns.start >= endIdx) continue;
+
+        var textNode = ns.node;
+        var localStart = Math.max(0, idx - ns.start);
+        var localEnd = Math.min(textNode.textContent.length, endIdx - ns.start);
+        var mark = document.createElement('mark');
+        mark.className = 'comment-highlight' + (extraClass ? ' ' + extraClass : '');
+        mark.dataset.commentId = commentId;
+
+        if (localStart === 0 && localEnd === textNode.textContent.length) {
+          textNode.parentNode.insertBefore(mark, textNode);
+          mark.appendChild(textNode);
+        } else {
+          var before = textNode.textContent.substring(0, localStart);
+          var matchText = textNode.textContent.substring(localStart, localEnd);
+          var after = textNode.textContent.substring(localEnd);
+          mark.textContent = matchText;
+          var par = textNode.parentNode;
+          if (after) par.insertBefore(document.createTextNode(after), textNode.nextSibling);
+          par.insertBefore(mark, textNode.nextSibling);
+          if (before) { textNode.textContent = before; }
+          else { par.removeChild(textNode); }
+        }
+        if (!firstMark) firstMark = mark;
+        lastMark = mark;
+      }
+      if (firstMark) return { first: firstMark, last: lastMark };
+      return null;
+    }
+    return null;
+  }
+
+  function clearMarks() {
+    var marks = Array.prototype.slice.call(mdRendered.querySelectorAll('mark.comment-highlight'));
+    marks.forEach(function(m) {
+      var parent = m.parentNode;
+      if (!parent) return;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      parent.removeChild(m);
+      // Re-join the split text nodes, or the next pass can't match across them.
+      parent.normalize();
+    });
+    Array.prototype.slice.call(mdRendered.querySelectorAll('.cmt-marker'))
+      .forEach(function(m) { m.remove(); });
+  }
+
+  // ============================================================
+  // Render
+  // ============================================================
+  function updateBadge() {
+    if (!badge) return;
+    var unresolved = comments.filter(function(c) { return !c.resolved; }).length;
+    var total = comments.length;
+    if (total === 0) { badge.style.display = 'none'; return; }
+    badge.style.display = 'inline-block';
+    if (unresolved > 0) {
+      badge.textContent = unresolved + ' comment' + (unresolved === 1 ? '' : 's');
+      badge.style.color = 'var(--accent)';
+    } else {
+      badge.textContent = total + ' resolved';
+      badge.style.color = 'var(--text-tertiary)';
+    }
+  }
+
+  function render() {
+    var pendingText = composer ? composer.anchorText : null;
+    var pendingPrefix = composer ? composer.paragraphPrefix : null;
+    var pendingValue = (composer && composer.el)
+      ? (composer.el.querySelector('textarea') || {}).value : null;
+
+    clearMarks();
+    placed = {}; cards = {}; orphans = []; order = [];
+    rail.innerHTML = '';
+
+    // 1. anchor every unresolved comment
+    comments.forEach(function(c) {
+      if (c.resolved) return;
+      if (!c.anchor_text) { orphans.push(c); return; }
+      var hit = findAndMarkText(mdRendered, c.anchor_text, c.id);
+      if (hit) placed[c.id] = hit; else orphans.push(c);
+    });
+
+    // 2. re-mark the in-flight selection so the composer keeps its anchor
+    if (pendingText) {
+      var ph = findAndMarkText(mdRendered, pendingText, '__pending', 'pending');
+      composer = {
+        anchorText: pendingText,
+        paragraphPrefix: pendingPrefix,
+        mark: ph ? ph.first : null,
+        el: null
+      };
+    }
+
+    var anchoredIds = comments
+      .filter(function(c) { return !c.resolved && placed[c.id]; })
+      .sort(function(a, b) {
+        return placed[a.id].first.getBoundingClientRect().top
+             - placed[b.id].first.getBoundingClientRect().top;
+      })
+      .map(function(c) { return c.id; });
+
+    order = anchoredIds.concat(orphans.map(function(c) { return c.id; }));
+
+    if (isMobile()) {
+      rail.classList.add('empty');
+      document.body.classList.remove('has-comments');   // no rail on mobile
+      renderMarkers(anchoredIds);
+      renderMobileChrome();
+    } else {
+      rail.classList.remove('empty');
+      buildRail(anchoredIds, pendingValue);
+      hideSheet();
+    }
+    updateBadge();
+  }
+
+  function byId(id) {
+    for (var i = 0; i < comments.length; i++) if (comments[i].id === id) return comments[i];
+    return null;
+  }
+
+  // ---------- desktop rail ----------
+  function buildRail(anchoredIds, pendingValue) {
+    var flow = [];
+
+    anchoredIds.forEach(function(id) {
+      var c = byId(id);
+      var card = makeCard(c, 'anchored');
+      card._top = (function(m) { return function() { return m.getBoundingClientRect().top; }; })(placed[id].first);
+      cards[id] = card;
+      rail.appendChild(card);
+      flow.push(card);
+    });
+
+    if (composer) {
+      var comp = makeComposer(pendingValue);
+      composer.el = comp;
+      if (composer.mark) {
+        comp._top = (function(m) { return function() { return m.getBoundingClientRect().top; }; })(composer.mark);
+      }
+      rail.appendChild(comp);
+      flow.push(comp);
+    }
+
+    flow.sort(function(a, b) {
+      var at = a._top ? a._top() : 1e9;
+      var bt = b._top ? b._top() : 1e9;
+      return at - bt;
+    });
+
+    if (orphans.length) {
+      var sec = mk('div', 'cmt-section');
+      sec.appendChild(mk('div', 'hd',
+        orphans.length + ' comment' + (orphans.length === 1 ? '' : 's') + ' · text changed'));
+      orphans.forEach(function(c) { sec.appendChild(makeCard(c, 'orphan')); });
+      rail.appendChild(sec);
+      flow.push(sec);
+    }
+
+    var resolved = comments.filter(function(c) { return c.resolved; });
+    if (resolved.length) {
+      var rsec = mk('div', 'cmt-section quiet');
+      rsec.appendChild(mk('div', 'hd', resolved.length + ' resolved'));
+      resolved.forEach(function(c) { rsec.appendChild(makeCard(c, 'resolved')); });
+      rail.appendChild(rsec);
+      flow.push(rsec);
+    }
+
+    // Nothing to show: drop the divider rather than leave a stray rule down the page.
+    rail.classList.toggle('empty', flow.length === 0);
+    // Drives the three-column media queries — only compete with the outline for
+    // the gutter when the rail actually has something in it. Toggled before
+    // layout() so the cards are parked against the resulting width.
+    document.body.classList.toggle('has-comments', flow.length > 0);
+    layout(flow);
+    if (composer && composer.el) {
+      var ta = composer.el.querySelector('textarea');
+      if (ta) ta.focus();
+    }
+  }
+
+  function layout(flow) {
+    var railTop = rail.getBoundingClientRect().top;
+    var cursor = 0;
+    flow.forEach(function(item) {
+      var top;
+      var t = item._top ? item._top() : null;
+      if (t !== null && t !== undefined) top = t - railTop - 2;
+      else top = cursor + 34;
+      if (top < cursor) top = cursor;
+      item.style.top = top + 'px';
+      cursor = top + item.offsetHeight + 14;
+    });
+    rail.style.minHeight = (cursor + 20) + 'px';
+  }
+
+  function whoRow(c, extra) {
+    var who = mk('div', 'who');
+    who.appendChild(mk('span', null, c.author || ''));   // no author on older comments
+    var when = mk('span', 'when');
+    when.textContent = timeAgo(c.timestamp);
+    if (extra) {
+      when.textContent = when.textContent + ' · ';
+      when.appendChild(extra);
+    }
+    who.appendChild(when);
+    return who;
+  }
+
+  function makeCard(c, kind) {
+    var cls = 'cmt-card' + (kind === 'orphan' ? ' orphan' : kind === 'resolved' ? ' resolved' : '');
+    var card = mk('div', cls);
+    card.dataset.commentId = c.id;
+
+    if (kind === 'orphan') card.appendChild(mk('span', 'cmt-tag', 'anchor no longer in file'));
+    card.appendChild(whoRow(c, kind === 'resolved' ? mk('span', 'cmt-check', 'resolved') : null));
+    card.appendChild(mk('div', 'body', c.comment || ''));
+
+    if (kind === 'orphan' && c.anchor_text) {
+      card.appendChild(mk('div', 'quote', quoted(c.anchor_text)));
+    }
+
+    var foot = mk('div', 'foot');
+    if (kind === 'resolved') {
+      foot.appendChild(link('Reopen', null, function() { postComment('unresolve', { id: c.id }); }));
+    } else {
+      foot.appendChild(link('Resolve', null, function() { postComment('resolve', { id: c.id }); }));
+    }
+    foot.appendChild(link('Delete', 'danger', function() { postComment('delete', { id: c.id }); }));
+    card.appendChild(foot);
+
+    if (kind === 'anchored') {
+      card.addEventListener('mouseenter', function() { warm(c.id, true); });
+      card.addEventListener('mouseleave', function() { warm(c.id, false); });
+    }
+    return card;
+  }
+
+  function makeComposer(pendingValue) {
+    var card = mk('div', 'cmt-card composer');
+    var author = getAuthor();
+
+    if (!author) {
+      var pick = mk('div', 'cmt-who-pick');
+      pick.appendChild(mk('span', null, 'Commenting as'));
+      AUTHORS.forEach(function(name) {
+        var b = mk('button', 'cmt-btn', name);
+        b.addEventListener('click', function() { setAuthor(name); render(); });
+        pick.appendChild(b);
+      });
+      card.appendChild(pick);
+    } else {
+      var who = mk('div', 'who');
+      who.appendChild(mk('span', null, author));
+      who.appendChild(mk('span', 'when', 'now'));
+      card.appendChild(who);
+    }
+
+    var ta = mk('textarea');
+    ta.placeholder = 'Comment on the selected text…';
+    if (pendingValue) ta.value = pendingValue;
+    if (composer && composer.anchorText) ta.title = composer.anchorText;
+    card.appendChild(ta);
+
+    var btns = mk('div', 'btns');
+    var cancel = mk('button', 'cmt-btn', 'Cancel');
+    cancel.addEventListener('click', cancelComposer);
+    var save = mk('button', 'cmt-btn primary', 'Save');
+    save.addEventListener('click', saveComposer);
+    btns.appendChild(cancel); btns.appendChild(save);
+    card.appendChild(btns);
+
+    ta.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveComposer(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancelComposer(); }
+    });
+    return card;
+  }
+
+  function warm(id, on) {
+    var card = cards[id];
+    if (card) {
+      card.classList.toggle('warm', on);
+      card.classList.toggle('active', on);
+    }
+    Array.prototype.slice.call(
+      mdRendered.querySelectorAll('mark.comment-highlight[data-comment-id="' + id + '"]')
+    ).forEach(function(m) { m.classList.toggle('warm', on); });
+  }
+
+  // ---------- composer lifecycle ----------
+  function openComposer(text, prefix) {
+    composer = { anchorText: text, paragraphPrefix: prefix, mark: null, el: null };
+    render();
+  }
+  function cancelComposer() {
+    composer = null;
+    hideSheet();
+    render();
+  }
+  function saveComposer() {
+    if (!composer) return;
+    var ta = composer.el ? composer.el.querySelector('textarea')
+                         : (sheet ? sheet.querySelector('textarea') : null);
+    var text = ta ? ta.value.trim() : '';
+    if (!text) { cancelComposer(); return; }
+    var payload = {
+      anchor_text: composer.anchorText,
+      paragraph_prefix: composer.paragraphPrefix || '',
+      comment: text
+    };
+    var author = getAuthor();
+    if (author) payload.author = author;
+    composer = null;
+    hideSheet();
+    postComment('add', payload);
+  }
+
+  // ---------- mobile ----------
+  function renderMarkers(anchoredIds) {
+    anchoredIds.forEach(function(id, i) {
+      var hit = placed[id];
+      if (!hit || !hit.last || !hit.last.parentNode) return;
+      var m = mk('span', 'cmt-marker', String(i + 1));
+      m.dataset.commentId = id;
+      hit.last.parentNode.insertBefore(m, hit.last.nextSibling);
+    });
+  }
+
+  function ensureStack() {
+    if (stack) return;
+    stack = mk('div', 'cmt-bottomstack');
+    chip = mk('div', 'cmt-chip');
+    chip.addEventListener('click', function() {
+      if (orphans.length) openSheet(orphans[0].id);
+    });
+    sheet = mk('div', 'cmt-sheet');
+    stack.appendChild(chip);
+    stack.appendChild(sheet);
+    document.body.appendChild(stack);
+  }
+
+  function renderMobileChrome() {
+    ensureStack();
+    if (orphans.length) {
+      chip.innerHTML = '';
+      chip.appendChild(mk('span', 'n', String(orphans.length)));
+      chip.appendChild(mk('span', null,
+        'comment' + (orphans.length === 1 ? '' : 's') + ' · text changed'));
+      chip.style.display = '';
+    } else {
+      chip.style.display = 'none';
+    }
+    if (sheetId && byId(sheetId)) openSheet(sheetId); else hideSheet();
+  }
+
+  function hideSheet() {
+    sheetId = null;
+    if (!stack) return;
+    // With no sheet up the chip is the only way to reach orphans, so keep it.
+    if (isMobile() && orphans.length) {
+      sheet.innerHTML = '';
+      sheet.style.display = 'none';
+      if (chip) chip.style.display = '';
+      stack.style.display = 'block';
+    } else {
+      stack.style.display = 'none';
+    }
+  }
+
+  function openSheet(id) {
+    ensureStack();
+    var c = byId(id);
+    if (!c) { hideSheet(); return; }
+    sheetId = id;
+    sheet.innerHTML = '';
+    sheet.style.display = '';
+    sheet.appendChild(mk('div', 'grip'));
+    sheet.appendChild(whoRow(c, null));
+    if (c.anchor_text) sheet.appendChild(mk('div', 'quote', quoted(c.anchor_text)));
+    if (!placed[id] && c.anchor_text) sheet.appendChild(mk('span', 'cmt-tag', 'anchor no longer in file'));
+    sheet.appendChild(mk('div', 'body', c.comment || ''));
+
+    var acts = mk('div', 'acts');
+    if (c.resolved) acts.appendChild(link('Reopen', null, function() { postComment('unresolve', { id: id }); }));
+    else acts.appendChild(link('Resolve', null, function() { postComment('resolve', { id: id }); }));
+    acts.appendChild(link('Delete', null, function() { sheetId = null; postComment('delete', { id: id }); }));
+    acts.appendChild(link('Close', null, hideSheet));
+
+    var pos = order.indexOf(id);
+    if (order.length > 1 && pos !== -1) {
+      var nav = mk('div', 'nav');
+      nav.appendChild(link('‹', null, function() {
+        openSheet(order[(pos - 1 + order.length) % order.length]);
+      }));
+      nav.appendChild(mk('span', null, (pos + 1) + ' of ' + order.length));
+      nav.appendChild(link('›', null, function() {
+        openSheet(order[(pos + 1) % order.length]);
+      }));
+      acts.appendChild(nav);
+    }
+    sheet.appendChild(acts);
+    stack.style.display = 'block';
+  }
+
+  function openMobileComposer(text, prefix) {
+    ensureStack();
+    composer = { anchorText: text, paragraphPrefix: prefix, mark: null, el: null };
+    sheetId = null;
+    sheet.innerHTML = '';
+    sheet.style.display = '';
+    sheet.appendChild(mk('div', 'grip'));
+
+    var author = getAuthor();
+    if (!author) {
+      var pick = mk('div', 'cmt-who-pick');
+      pick.appendChild(mk('span', null, 'Commenting as'));
+      AUTHORS.forEach(function(name) {
+        var b = mk('button', 'cmt-btn', name);
+        b.addEventListener('click', function() { setAuthor(name); openMobileComposer(text, prefix); });
+        pick.appendChild(b);
+      });
+      sheet.appendChild(pick);
+    } else {
+      var who = mk('div', 'who');
+      who.appendChild(mk('span', null, author));
+      who.appendChild(mk('span', 'when', 'now'));
+      sheet.appendChild(who);
+    }
+
+    sheet.appendChild(mk('div', 'quote', quoted(text)));
+    var ta = mk('textarea');
+    ta.placeholder = 'Comment on the selected text…';
+    sheet.appendChild(ta);
+    var btns = mk('div', 'btns');
+    var cancel = mk('button', 'cmt-btn', 'Cancel');
+    cancel.addEventListener('click', cancelComposer);
+    var save = mk('button', 'cmt-btn primary', 'Comment');
+    save.addEventListener('click', saveComposer);
+    btns.appendChild(cancel); btns.appendChild(save);
+    sheet.appendChild(btns);
+    ta.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveComposer(); }
+    });
+    if (chip) chip.style.display = 'none';
+    stack.style.display = 'block';
+    ta.focus();
+  }
+
+  // ---------- selection -> add flow ----------
+  // Hand-drawn margin mark: a small speech bubble, stroke-only, currentColor.
+  var ADD_MARK_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M4.2 4.4c-1 .1-1.6.6-1.6 1.6v5.8c0 1 .5 1.5 1.5 1.6h1.1l.1 2.4 2.9-2.4 5.6-.1c1 0 1.6-.5 1.6-1.5V6c0-1-.6-1.6-1.6-1.6z"/>' +
+    '<path d="M6.6 8.9h.01M9.8 8.9h.01M13 8.9h.01"/></svg>';
+
+  function ensureAddMark() {
+    if (addMark) return;
+    // A real <button>: iOS only reliably dispatches activation on natively
+    // clickable elements, and it gets keyboard focus for free.
+    addMark = mk('button', 'cmt-addmark');
+    addMark.type = 'button';
+    addMark.innerHTML = ADD_MARK_SVG;
+    addMark.title = 'Comment on this selection';
+    addMark.setAttribute('aria-label', 'Comment on this selection');
+    // Act on press, not click: pointerdown lands BEFORE the tap collapses the
+    // selection, so the affordance can never be dismissed by its own activation.
+    // The text was captured when the mark was shown, so losing the live
+    // selection here costs nothing.
+    addMark.addEventListener('pointerdown', activateAddMark);
+    addMark.addEventListener('click', function(e) {
+      if (!window.PointerEvent) activateAddMark(e);   // fallback only
+      else { e.preventDefault(); e.stopPropagation(); }
+    });
+    document.body.appendChild(addMark);
+  }
+  function activateAddMark(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var d = addMark && addMark._data;
+    hideAddMark();
+    if (!d) return;
+    var s = window.getSelection();
+    if (s) s.removeAllRanges();
+    if (isMobile()) openMobileComposer(d.text, d.prefix);
+    else openComposer(d.text, d.prefix);
+  }
+  function hideAddMark() {
+    if (addMark) { addMark.style.display = 'none'; addMark._data = null; }
+  }
+
+  function getParagraphPrefix(range) {
+    var node = range.startContainer;
+    var block = node.nodeType === 3 ? node.parentNode : node;
+    while (block && block !== mdRendered) {
+      var tag = block.tagName;
+      if (tag && /^(P|LI|H[1-6]|BLOCKQUOTE|DIV|TD|TH)$/.test(tag)) break;
+      block = block.parentNode;
+    }
+    if (block && block !== mdRendered) return (block.textContent || '').substring(0, 100);
+    return '';
+  }
+
+  // One affordance, both platforms. Always either shows or hides — it is the
+  // single source of truth for whether a selection is offering a comment, so a
+  // selection made for reading or copying can't leave anything behind.
+  function checkSelection() {
+    var sel = window.getSelection();
+    if (isEditing() || !sel || sel.isCollapsed || sel.rangeCount === 0) { hideAddMark(); return; }
+    var range = sel.getRangeAt(0);
+    if (!mdRendered.contains(range.commonAncestorContainer)) { hideAddMark(); return; }
+    var text = sel.toString();
+    if (!text || text.trim().length < 2) { hideAddMark(); return; }
+    var rect = range.getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) { hideAddMark(); return; }
+
+    ensureAddMark();
+    var touch = isMobile();
+    addMark.classList.toggle('touch', touch);
+    addMark._data = { text: text, prefix: getParagraphPrefix(range) };
+    addMark.style.display = 'block';
+
+    var mw = addMark.offsetWidth || (touch ? 44 : 26);
+    var mh = addMark.offsetHeight || (touch ? 44 : 26);
+    var left, top;
+    if (touch) {
+      // iOS paints its own Copy/Look Up callout directly ABOVE the selection,
+      // so sit below it, centred. Fall back above only if there's no room.
+      left = rect.left + rect.width / 2 - mw / 2;
+      top = rect.bottom + 12;
+      if (top + mh > window.innerHeight - 8) top = rect.top - mh - 12;
+    } else {
+      // Desktop: just right of the selection, so it never covers the next line.
+      left = rect.right + 8;
+      top = rect.top + rect.height / 2 - mh / 2;
+    }
+    addMark.style.left = Math.max(8, Math.min(left, window.innerWidth - mw - 8)) + 'px';
+    addMark.style.top = Math.max(8, Math.min(top, window.innerHeight - mh - 8)) + 'px';
+  }
+
+  // ---------- wiring ----------
+  mdRendered.addEventListener('mouseover', function(e) {
+    if (isMobile()) return;
+    var m = e.target.closest && e.target.closest('mark.comment-highlight');
+    if (m && m.dataset.commentId && cards[m.dataset.commentId]) warm(m.dataset.commentId, true);
+  });
+  mdRendered.addEventListener('mouseout', function(e) {
+    if (isMobile()) return;
+    var m = e.target.closest && e.target.closest('mark.comment-highlight');
+    if (m && m.dataset.commentId) warm(m.dataset.commentId, false);
+  });
+  mdRendered.addEventListener('click', function(e) {
+    var marker = e.target.closest && e.target.closest('.cmt-marker');
+    var m = marker || (e.target.closest && e.target.closest('mark.comment-highlight'));
+    if (!m || !m.dataset.commentId) return;
+    var id = m.dataset.commentId;
+    if (id === '__pending') return;
+    e.preventDefault();
+    if (isMobile()) { openSheet(id); return; }
+    var card = cards[id];
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    warm(id, true);
+    setTimeout(function() { warm(id, false); }, 1400);
+  });
+
+  // selectionchange is the ONLY driver. iOS Safari does not deliver mouseup for
+  // a long-press selection gesture, so a mouseup-driven affordance simply never
+  // appears on a phone — that was the bug. selectionchange fires on every
+  // platform, and again on each drag-handle adjustment, so the mark follows a
+  // selection being resized instead of going stale. Debounced because it fires
+  // continuously while dragging.
+  var selTimer = null;
+  FX.on(document, 'selectionchange', function() {
+    clearTimeout(selTimer);
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hideAddMark(); return; }
+    selTimer = FX.after(180, checkSelection);
+  });
+
+  // Esc: close the composer, else drop the affordance, else cool any warm card.
+  // (Markdown rail only — the .html element-comment overlay has its own handler.)
+  FX.on(document, 'keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    if (composer) { cancelComposer(); return; }
+    if (addMark && addMark.style.display === 'block') {
+      hideAddMark();
+      var s = window.getSelection();
+      if (s) s.removeAllRanges();
+      return;
+    }
+    if (sheetId) { hideSheet(); return; }
+    Object.keys(cards).forEach(function(id) { warm(id, false); });
+  });
+
+  if (badge) {
+    badge.addEventListener('click', function() {
+      var first = mdRendered.querySelector('mark.comment-highlight:not(.pending)');
+      if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      else if (orphans.length && rail) rail.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    });
+  }
+
+  var resizeTimer = null;
+  FX.on(window, 'resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = FX.after(150, render);
+  });
+
+  // Edit mode hides the prose; the rail and any open sheet must follow it.
+  var rendered = document.getElementById('markdown-rendered');
+  if (rendered && window.MutationObserver) {
+    FX.watch(new MutationObserver(function() {
+      var hidden = rendered.style.display === 'none';
+      rail.style.display = hidden ? 'none' : '';
+      if (hidden) {
+        hideAddMark();
+        hideSheet();
+      } else {
+        FX.after(30, render);
+      }
+    })).observe(rendered, { attributes: true, attributeFilter: ['style'] });
+  }
+
+  // --- initialize ---
+  FX.after(100, fetchComments);
+  FX.after(700, function() { if (!isMobile() && !composer) render(); });  // after webfonts settle
+})();
 
 // --- Directory listing: filter + sort ---
 (function() {
@@ -2573,6 +3673,147 @@ if (editBtn) {
 </html>"""
 
 
+
+# ============================================================
+# TRUST BATTERY — one JSON file per person in TRUST_BATTERY_DIR
+# ============================================================
+TRUST_BATTERY_DIR = Path(os.environ.get("FILE_EXPLORER_TRUST_BATTERY_DIR",
+                                        str(BASE_DIR / "trust-battery")))
+
+
+def _trust_battery_people():
+    """Every <name>.json in the battery directory, sorted. Empty when unused."""
+    if not TRUST_BATTERY_DIR.is_dir():
+        return []
+    return sorted(f.stem for f in TRUST_BATTERY_DIR.glob("*.json"))
+
+
+def _battery_color(charge):
+    """Return a color for the battery charge level."""
+    if charge < 25:
+        return '#EF4444'
+    elif charge < 50:
+        return '#F59E0B'
+    elif charge < 75:
+        return '#84CC16'
+    return '#22C55E'
+
+
+def _battery_tier(charge):
+    """Return autonomy tier name for a charge level."""
+    if charge < 25:
+        return 'PROPOSE AND WAIT'
+    elif charge < 50:
+        return 'ROUTINE EXECUTION'
+    elif charge < 75:
+        return 'JUDGMENT CALLS'
+    return 'FULL AUTONOMY'
+
+
+def _sparkline_svg(history, color):
+    """Generate an inline SVG sparkline from battery history."""
+    if not history:
+        return '<svg width="180" height="40" viewBox="0 0 180 40"></svg>'
+    entries = history[-30:]
+    w, h = 180, 40
+    points = []
+    for i, entry in enumerate(entries):
+        x = (i / max(len(entries) - 1, 1)) * w
+        y = h - (entry.get('charge_after', 20) / 100.0) * h
+        points.append(f'{x:.1f},{y:.1f}')
+    polyline = ' '.join(points)
+    # Add a faint area fill
+    area_points = f'0,{h} ' + polyline + f' {w},{h}'
+    return f'''<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" style="display:block;">
+        <polygon points="{area_points}" fill="{color}" opacity="0.08"/>
+        <polyline points="{polyline}" fill="none" stroke="{color}"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>'''
+
+
+def _trust_battery_widget():
+    """Return HTML for the trust battery widget on the home page."""
+    people = _trust_battery_people()
+    if not people:
+        return ''
+    cards = []
+    for name in people:
+        fpath = TRUST_BATTERY_DIR / f'{name}.json'
+        try:
+            data = json.loads(fpath.read_text())
+        except Exception:
+            data = {'person': name, 'current_charge': 20.0, 'history': []}
+
+        charge = data.get('current_charge', 20.0)
+        color = _battery_color(charge)
+        tier = _battery_tier(charge)
+        history = data.get('history', [])
+        sparkline = _sparkline_svg(history, color)
+
+        # Latest delta info
+        delta_html = '<span style="color:var(--text-tertiary);">No history yet</span>'
+        reasoning_html = ''
+        if history:
+            last = history[-1]
+            d = last.get('delta', 0)
+            decay = last.get('decay_applied', False)
+            date = last.get('date', '')
+            sign = '+' if d >= 0 else ''
+            delta_color = '#86EFAC' if d > 0 else '#EF4444' if d < 0 else 'var(--text-tertiary)'
+            delta_parts = [f'<span style="color:{delta_color};">{sign}{d}</span>']
+            if decay:
+                delta_parts.append('<span style="color:#EF4444;">-0.5 decay</span>')
+            delta_html = f'{" + ".join(delta_parts)} on {date}'
+
+            # Top 2 reasoning bullets
+            reasons = last.get('reasoning', [])[:2]
+            if reasons:
+                reason_lines = ''.join(
+                    f'<div style="margin-top:2px;">{r}</div>' for r in reasons
+                )
+                reasoning_html = f'''<div style="font-size:11px; color:var(--text-tertiary);
+                    margin-top:6px; line-height:1.4; border-top:1px solid var(--border-subtle);
+                    padding-top:6px;">{reason_lines}</div>'''
+
+        # Battery fill bar
+        fill_width = max(charge, 1)
+
+        cards.append(f'''<div style="flex:1; background:var(--bg-surface);
+            border-radius:8px; padding:16px; border:1px solid var(--border-subtle);">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+                <span style="font-size:13px; color:var(--text-secondary); text-transform:capitalize;">{name}</span>
+                <span style="font-size:22px; color:{color}; font-weight:700;">{charge:.1f}%</span>
+            </div>
+            <div style="height:4px; background:var(--bg-elevated); border-radius:2px; margin-bottom:8px;">
+                <div style="height:100%; width:{fill_width:.1f}%; background:{color}; border-radius:2px;
+                    transition:width 0.3s ease;"></div>
+            </div>
+            <div style="font-size:10px; letter-spacing:0.08em; color:var(--text-tertiary); margin-bottom:10px;">{tier}</div>
+            {sparkline}
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:8px;">
+                {delta_html}
+                <span style="float:right;"><a href="/browse{TRUST_BATTERY_DIR}/{name}.json"
+                    style="color:var(--accent); text-decoration:none;">history</a></span>
+            </div>
+            {reasoning_html}
+        </div>''')
+
+    return f'''<div style="display:flex; gap:16px; padding:16px 0; border-bottom:1px solid var(--border-subtle);
+        margin-bottom:8px;">{''.join(cards)}</div>'''
+
+
+@app.route('/api/trust-battery')
+def api_trust_battery():
+    """Current trust battery state for everyone with a file, as JSON."""
+    result = {}
+    for name in _trust_battery_people():
+        try:
+            result[name] = json.loads((TRUST_BATTERY_DIR / f'{name}.json').read_text())
+        except Exception:
+            result[name] = {'person': name, 'current_charge': 20.0, 'history': []}
+    return jsonify(result)
+
+
 def human_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024:
@@ -2690,6 +3931,7 @@ def _render_page(path_label, content, visitor=None):
     page = page.replace('HOME_BROWSE_PATH_PLACEHOLDER', f'/browse{BASE_DIR}')
     page = page.replace('SIDEBAR_LINKS', make_sidebar(path_label, visitor))
     page = page.replace('BREADCRUMB', make_breadcrumb(path_label))
+    page = page.replace('COMMENT_AUTHORS_JSON', json.dumps(COMMENT_AUTHORS))
     page = page.replace('CONTENT', content)
     return Response(page, content_type='text/html; charset=utf-8')
 
@@ -2776,6 +4018,15 @@ def _scheduled_prompt_prefixes():
 
 
 # Generic Slack forwarding patterns (owner-agnostic).
+# Prompts that mark a session as a scheduled run rather than a live chat.
+# Configure with the phrases your own cron/launchd prompts open with; with none
+# set, nothing is classified as scheduled.
+_SCHEDULED_PHRASES = [x.strip() for x in
+                      os.environ.get("FILE_EXPLORER_SCHEDULED_PHRASES", "").split(",") if x.strip()]
+_SCHEDULED_PHRASE_RE = (re.compile("|".join(re.escape(x) for x in _SCHEDULED_PHRASES),
+                                   re.IGNORECASE)
+                        if _SCHEDULED_PHRASES else None)
+
 _SLACK_DM_RE = re.compile(r'^\[[^\]]+\]\(U[A-Z0-9]+\):')
 _SLACK_CHANNEL_RE = re.compile(r'(?:public |private )?channel #([A-Za-z0-9_-]+)')
 
@@ -2789,12 +4040,16 @@ def _classify_session_source(first_user_msg):
     ch = _SLACK_CHANNEL_RE.search(m[:120])
     if ch:
         return 'channel', '#' + ch.group(1)
-    if m.startswith('You received this message') or _SLACK_DM_RE.match(m):
+    if (m.startswith('You received this message')
+            or _SLACK_DM_RE.match(m)
+            or m.startswith(f'[You ({ASSISTANT_NAME})]:')):
         return 'dm', 'DM'
     norm = m.replace('\n', ' ')[:50]
     for key in _scheduled_prompt_prefixes():
         if norm.startswith(key) or key.startswith(norm[:40]):
             return 'scheduled', 'Scheduled'
+    if _SCHEDULED_PHRASE_RE and _SCHEDULED_PHRASE_RE.search(m[:200]):
+        return 'scheduled', 'Scheduled'
     return 'terminal', 'Terminal'
 
 
@@ -2811,6 +4066,10 @@ def _parse_session_file(f, stat):
     user_count = 0
     assistant_count = 0
     entrypoint = ''
+    tokens_in = 0
+    tokens_out = 0
+    sidechain = None
+    model = ''
 
     with open(f) as fh:
         for line in fh:
@@ -2818,6 +4077,9 @@ def _parse_session_file(f, stat):
                 obj = json.loads(line)
                 t = obj.get('type')
                 ts = obj.get('timestamp')
+
+                if t in ('user', 'assistant') and sidechain is None:
+                    sidechain = bool(obj.get('isSidechain'))
 
                 if t == 'user':
                     user_count += 1
@@ -2844,6 +4106,16 @@ def _parse_session_file(f, stat):
                     msg_count += 1
                     if ts:
                         last_timestamp = ts
+                    if not model:
+                        model = _short_model((obj.get('message') or {}).get('model') or '')
+                    usage = (obj.get('message') or {}).get('usage') or {}
+                    try:
+                        tokens_in += (int(usage.get('input_tokens') or 0)
+                                      + int(usage.get('cache_creation_input_tokens') or 0)
+                                      + int(usage.get('cache_read_input_tokens') or 0))
+                        tokens_out += int(usage.get('output_tokens') or 0)
+                    except (TypeError, ValueError):
+                        pass
             except (json.JSONDecodeError, KeyError):
                 continue
 
@@ -2858,6 +4130,7 @@ def _parse_session_file(f, stat):
     )
     if slack_prefix:
         preview = preview[slack_prefix.end():]
+    # Also strip scheduled task boilerplate
     if preview and len(preview) > 300:
         preview = preview[:300]
     preview = preview.strip().replace('\n', ' ')[:100]
@@ -2876,6 +4149,10 @@ def _parse_session_file(f, stat):
         'entrypoint': entrypoint,
         'kind': kind,
         'source': source,
+        'tokens_in': tokens_in,
+        'tokens_out': tokens_out,
+        'model': model,
+        'sidechain': bool(sidechain),
     }
 
 
@@ -2935,18 +4212,19 @@ def list_conversation_sessions():
     descending.
     """
     sessions = []
-    if not CONVERSATIONS_DIR.exists():
-        return sessions
 
     # Stat every file (cheap) outside the lock, and figure out which files
     # actually need a (slow) re-parse.
     current = {}   # path(str) -> (file, mtime, size)
-    for f in CONVERSATIONS_DIR.glob('*.jsonl'):
-        try:
-            stat = f.stat()
-        except OSError:
-            continue
-        current[str(f)] = (f, stat.st_mtime, stat.st_size)
+    if CONVERSATIONS_DIR.exists():
+        for f in CONVERSATIONS_DIR.glob('*.jsonl'):
+            try:
+                stat = f.stat()
+            except OSError:
+                continue
+            current[str(f)] = (f, stat.st_mtime, stat.st_size)
+    if not current:
+        return sessions
 
     with _SESSIONS_CACHE_LOCK:
         _load_sessions_cache_from_disk()
@@ -2954,7 +4232,11 @@ def list_conversation_sessions():
         to_parse = []
         for path, (f, mtime, size) in current.items():
             entry = _SESSIONS_CACHE.get(path)
-            if entry is None or entry['mtime'] != mtime or entry['size'] != size:
+            # 'tokens_in'/'model' missing = entry persisted before that field
+            # landed — re-parse once so rows never show blanks.
+            if (entry is None or entry['mtime'] != mtime or entry['size'] != size
+                    or 'tokens_in' not in entry['meta']
+                    or 'model' not in entry['meta']):
                 to_parse.append((path, f, mtime, size))
 
     # Parse the stale/new files OUTSIDE the lock (the expensive part).
@@ -2964,7 +4246,8 @@ def list_conversation_sessions():
             stat_holder = type('S', (), {'st_size': size, 'st_mtime': mtime})()
             meta = _parse_session_file(f, stat_holder)
             parsed[path] = {'mtime': mtime, 'size': size, 'meta': meta}
-        except Exception:
+        except Exception as e:
+            print(f'file-explorer: could not parse session {path}: {e}', file=sys.stderr)
             continue
 
     changed = False
@@ -2981,7 +4264,9 @@ def list_conversation_sessions():
         # Build the result from the cache (only for currently-present files).
         for path in current:
             entry = _SESSIONS_CACHE.get(path)
-            if entry:
+            # Sidechain (subagent) sessions are noise on the index — they're
+            # reachable from their parent transcript instead.
+            if entry and not entry['meta'].get('sidechain'):
                 sessions.append(dict(entry['meta']))
         snapshot = dict(_SESSIONS_CACHE) if changed else None
 
@@ -2994,7 +4279,7 @@ def list_conversation_sessions():
 
 def parse_conversation(session_id):
     """Parse a JSONL conversation file into structured messages for rendering."""
-    f = CONVERSATIONS_DIR / f'{session_id}.jsonl'
+    f = _find_session_file(session_id)
     if not f.exists():
         return None
 
@@ -3027,6 +4312,7 @@ def parse_conversation(session_id):
                         'blocks': blocks,
                         'is_meta': is_meta,
                         'source_tool_id': source_tool_id,
+                        'index': len(messages),
                     })
 
                 elif t == 'assistant':
@@ -3046,6 +4332,8 @@ def parse_conversation(session_id):
                         'role': 'assistant',
                         'timestamp': timestamp,
                         'blocks': blocks,
+                        'model': msg.get('model', ''),
+                        'index': len(messages),
                     })
 
             except (json.JSONDecodeError, KeyError):
@@ -3054,18 +4342,207 @@ def parse_conversation(session_id):
     return messages
 
 
-def _render_conversation_block(block, block_idx):
+def _find_session_file(session_id):
+    # Composite id "<parent>--agent-<agentId>" → sidechain (subagent) transcript
+    # stored at <dir>/<parent>/subagents/agent-<agentId>.jsonl
+    if '--agent-' in session_id:
+        parent, aid = session_id.split('--agent-', 1)
+        return CONVERSATIONS_DIR / parent / 'subagents' / f'agent-{aid}.jsonl'
+    return CONVERSATIONS_DIR / f'{session_id}.jsonl'
+
+
+# --- Slack identity mapping ----------------------------------------------
+# Raw Slack user IDs are noise in a transcript; map configured IDs to names
+# wherever text is rendered. With no configuration the text is left untouched.
+_SLACK_IDS_ALT = '|'.join(SLACK_ID_NAMES) if SLACK_ID_NAMES else r'(?!x)x'
+_SLACK_LINK_RE = re.compile(r'\[([^\]\n]{0,60})\]\((' + _SLACK_IDS_ALT + r')\)')
+_SLACK_MENTION_RE = re.compile(r'<@(' + _SLACK_IDS_ALT + r')>')
+_SLACK_BARE_RE = re.compile(r'\b(' + _SLACK_IDS_ALT + r')\b')
+
+def _subst_slack_ids(text):
+    """Replace known Slack user IDs with human names in rendered text."""
+    if not text or 'U0' not in text:
+        return text
+    text = _SLACK_LINK_RE.sub(lambda m: SLACK_ID_NAMES[m.group(2)], text)
+    text = _SLACK_MENTION_RE.sub(lambda m: '@' + SLACK_ID_NAMES[m.group(1)], text)
+    return _SLACK_BARE_RE.sub(lambda m: SLACK_ID_NAMES[m.group(1)], text)
+
+def _esc(text):
+    """html-escape with Slack IDs mapped to names first."""
+    return html_mod.escape(_subst_slack_ids(text))
+
+def _agent_links_for(session_id, f):
+    """Map Agent tool_use ids → viewer URLs of their sidechain transcripts.
+
+    Subagent runs live at <dir>/<session>/subagents/agent-<id>.jsonl with a
+    sibling agent-<id>.meta.json whose toolUseId is the parent transcript's
+    Agent tool_use block id — an exact parent→sidechain mapping.
+    """
+    links = {}
+    if '--agent-' in session_id:
+        return links
+    sub = f.parent / f.stem / 'subagents'
+    if not sub.is_dir():
+        return links
+    try:
+        metas = sorted(sub.glob('agent-*.meta.json'))
+    except OSError:
+        return links
+    for meta_f in metas:
+        try:
+            meta = json.loads(meta_f.read_text())
+        except Exception:
+            continue
+        tid = meta.get('toolUseId')
+        aid = meta_f.name[len('agent-'):-len('.meta.json')]
+        if tid and aid:
+            links[tid] = f'/conversations/{session_id}--agent-{aid}'
+    return links
+
+def _conversation_ctx(session_id):
+    """Per-session render context: speaker naming and subagent links."""
+    f = _find_session_file(session_id)
+    return {
+        'session_id': session_id,
+        'assistant_label': ASSISTANT_NAME,
+        'agent_links': _agent_links_for(session_id, f),
+    }
+
+def _fmt_tokens(n):
+    """Compact token count: 946 → '946', 45_800 → '46k', 2_130_000 → '2.1M'."""
+    n = int(n or 0)
+    if n >= 10_000_000:
+        return f'{n / 1e6:.0f}M'
+    if n >= 1_000_000:
+        return f'{n / 1e6:.1f}M'
+    if n >= 1_000:
+        return f'{n / 1e3:.0f}k'
+    return str(n)
+
+def _short_model(model_id):
+    """'claude-opus-4-8-20260115' -> 'opus-4-8'; '' stays ''."""
+    m = re.sub(r'^claude-', '', model_id or '')
+    m = re.sub(r'-\d{8}$', '', m)
+    return m
+
+def _full_block_details(ctx, msg_index, block_idx, label):
+    """Expandable, lazily-fetched full I/O for a tool block (default collapsed).
+
+    The <pre> starts empty; a delegated toggle handler fetches the full
+    pretty-printed content from /api/conversations/<sid>/block/<msg>/<block>
+    on first open, so big sessions don't bloat the page HTML.
+    """
+    if not ctx or msg_index is None:
+        return ''
+    sid = html_mod.escape(str(ctx.get('session_id', '')), quote=True)
+    return (f'<details class="tool-full" data-session="{sid}" '
+            f'data-msg="{msg_index}" data-block="{block_idx}">'
+            f'<summary>{label}</summary>'
+            f'<pre class="tool-full-pre" data-state="empty"></pre></details>')
+
+
+_SESSION_OUTPUT_CACHE = {}
+
+def _session_output_cached(session_id):
+    if session_id in _SESSION_OUTPUT_CACHE:
+        return _SESSION_OUTPUT_CACHE[session_id]
+    if len(_SESSION_OUTPUT_CACHE) > 400:
+        _SESSION_OUTPUT_CACHE.clear()
+    out = None
+    try:
+        f = _find_session_file(session_id)
+        if f.exists():
+            out = _extract_session_output(f)
+    except Exception:
+        out = None
+    _SESSION_OUTPUT_CACHE[session_id] = out
+    return out
+
+_SPEAKER_LINK_RE = re.compile(r'\[([^\]\n]{1,60})\]\((U[A-Z0-9]{6,})\):')
+_SPEAKER_BARE_RE = re.compile(r'^\s*(U[A-Z0-9]{6,}):')
+_SPEAKER_BRACKET_RE = re.compile(r'^\s*\[([A-Z][A-Za-z .\'-]{1,40})\]')
+
+def _detect_user_speaker(blocks):
+    """Name the human behind a Slack-framed user message, if identifiable."""
+    for b in blocks:
+        if b.get('type') != 'text':
+            continue
+        t = b.get('text', '')
+        if not isinstance(t, str):
+            return None
+        m = _SPEAKER_BARE_RE.match(t)
+        if m:
+            return SLACK_ID_NAMES.get(m.group(1))
+        m = _SPEAKER_BRACKET_RE.match(t)
+        if m:
+            return m.group(1).title()
+        m = _SPEAKER_LINK_RE.search(t[:2000])
+        if m:
+            return SLACK_ID_NAMES.get(m.group(2)) or m.group(1)
+        return None
+    return None
+
+
+SLACK_SESSIONS_FILE = BOT_DIR / '.sessions.json'
+SLACK_AUDIT_LOG = BOT_DIR / 'audit.log'
+
+
+def get_slack_url_for_session(session_id):
+    """Deep link back to the Slack thread a session came from, when there is one."""
+    if not SLACK_TEAM_DOMAIN:
+        return None
+    return _slack_url_from(SLACK_SESSIONS_FILE, SLACK_AUDIT_LOG, session_id)
+
+def _slack_url_from(sessions_file, audit_log, session_id):
+    try:
+        # Load thread_ts -> session_id mapping, reverse it
+        with open(sessions_file) as f:
+            sessions = json.load(f)
+        thread_ts = None
+        for ts, sid in sessions.items():
+            if sid == session_id:
+                thread_ts = ts
+                break
+        if not thread_ts:
+            return None
+
+        # Find channel from audit log
+        channel = None
+        with open(audit_log) as f:
+            for line in f:
+                if f'SESSION:{session_id}' in line:
+                    for part in line.strip().split(' | '):
+                        if part.startswith('CHANNEL:'):
+                            channel = part.split(':', 1)[1]
+                            break
+                    if channel:
+                        break
+        if not channel:
+            return None
+
+        # Construct Slack archive URL
+        ts_clean = thread_ts.replace('.', '')
+        return f'https://{SLACK_TEAM_DOMAIN}.slack.com/archives/{channel}/p{ts_clean}'
+    except Exception:
+        return None
+
+
+def _render_conversation_block(block, block_idx, ctx=None, msg_index=None):
     """Render a single content block (text, thinking, tool_use, tool_result) as HTML."""
     btype = block.get('type', '')
 
     if btype == 'text':
-        text = block.get('text', '')
+        text = _subst_slack_ids(block.get('text', ''))
         escaped = html_mod.escape(text)
         return f'<div class="conv-text"><div class="conv-markdown" data-raw="{html_mod.escape(text, quote=True)}">{escaped}</div></div>'
 
     elif btype == 'thinking':
         thinking = block.get('thinking', '')
-        escaped = html_mod.escape(thinking)
+        if not thinking.strip():
+            # Frontier models persist only an encrypted signature — no
+            # expandable UI promising content that isn't there.
+            return '<div class="conv-thinking-empty">reasoning (encrypted by model)</div>'
+        escaped = _esc(thinking)
         return f'''<details class="conv-thinking">
             <summary><span class="thinking-icon">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="7" cy="7" r="5.5"/><path d="M5.5 5.5c0-1.1.7-1.8 1.5-1.8s1.5.7 1.5 1.8c0 .8-.6 1.2-1.5 1.5v.8"/><circle cx="7" cy="9.5" r=".4" fill="currentColor"/></svg>
@@ -3083,11 +4560,21 @@ def _render_conversation_block(block, block_idx):
 
         # Build the detail body
         detail_html = _render_tool_input(name, inp)
+        detail_html += _full_block_details(ctx, msg_index, block_idx, 'full input')
+
+        # Delegation: link an Agent call to its sidechain transcript when the
+        # subagents/*.meta.json toolUseId matches this block's id.
+        agent_link = ''
+        if ctx and name in ('Agent', 'Task'):
+            href = ctx.get('agent_links', {}).get(tool_id)
+            if href:
+                agent_link = (f' <a class="agent-link" href="{html_mod.escape(href, quote=True)}"'
+                              f' onclick="event.stopPropagation()">&rarr; agent transcript</a>')
 
         return f'''<details class="conv-tool-use" data-tool-id="{html_mod.escape(tool_id)}">
             <summary><span class="tool-icon">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 2.5l3 3-7.5 7.5H1v-3z"/><path d="M7 4l3 3"/></svg>
-            </span><span class="tool-name">{html_mod.escape(name)}</span> <span class="tool-summary">{html_mod.escape(summary)}</span></summary>
+            </span><span class="tool-name">{html_mod.escape(name)}</span> <span class="tool-summary">{_esc(summary)}</span>{agent_link}</summary>
             <div class="tool-body">{detail_html}</div>
         </details>'''
 
@@ -3106,17 +4593,21 @@ def _render_conversation_block(block, block_idx):
                     parts.append(c.get('text', ''))
             result_text = '\n'.join(parts)
 
-        if len(result_text) > 5000:
+        result_text = _subst_slack_ids(result_text)
+        truncated = len(result_text) > 5000
+        preview_text = result_text[:80].replace(chr(10), ' ')
+        if truncated:
             result_text = result_text[:5000] + f'\n\n... ({len(result_text) - 5000} more characters truncated)'
 
         escaped = html_mod.escape(result_text)
         error_class = ' tool-error' if is_error else ''
+        full_details = _full_block_details(ctx, msg_index, block_idx, 'full result')
 
         return f'''<details class="conv-tool-result{error_class}" data-tool-id="{html_mod.escape(tool_use_id)}">
             <summary><span class="result-icon">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2.5 7.5l3 3 6-7"/></svg>
-            </span>Result{' (error)' if is_error else ''} <span class="result-preview">{html_mod.escape(result_text[:80].replace(chr(10), " "))}</span></summary>
-            <div class="result-body"><pre>{escaped}</pre></div>
+            </span>Result{' (error)' if is_error else ''} <span class="result-preview">{html_mod.escape(preview_text)}</span></summary>
+            <div class="result-body"><pre>{escaped}</pre>{full_details}</div>
         </details>'''
 
     return ''
@@ -3433,8 +4924,6 @@ def serve_tasks():
     </div>'''
 
     return _render_page('Scheduled Tasks', content)
-
-
 @app.route('/tasks/<path:label>')
 def serve_task_detail(label):
     visitor = get_visitor()
@@ -3663,8 +5152,6 @@ def serve_task_detail(label):
     </div>'''
 
     return _render_page(f'Task: {name}', content)
-
-
 # ============================================================
 # CONVERSATIONS ROUTES
 # ============================================================
@@ -3672,9 +5159,6 @@ def serve_task_detail(label):
 @app.route('/conversations')
 def serve_conversations():
     """Conversation index page — all sessions grouped by date."""
-    visitor = get_visitor()
-    if visitor["ring"] > 1:
-        return Response('Access denied — supervisors only', status=403)
     sessions = list_conversation_sessions()
 
     total = len(sessions)
@@ -3700,7 +5184,7 @@ def serve_conversations():
             groups[label] = []
         groups[label].append(s)
 
-    # Build rows — clean single-line per conversation
+    # Build rows — clean single-line per conversation like the mock
     marker_svg = '<svg class="conv-marker" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12M2 8h12M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>'
 
     # Build tab headers and group sections
@@ -3718,18 +5202,25 @@ def serve_conversations():
                 time_str = dt.strftime('%-H:%M')
             else:
                 time_str = dt.strftime('%-d %b')
-            preview = s['preview'] or '<span style="color:var(--text-tertiary);font-style:italic">Scheduled task</span>'
-            size_str = human_size(s['size'])
+            raw_preview = s['preview']
+            preview = (_esc(raw_preview) if raw_preview
+                       else '<span style="color:var(--text-tertiary);font-style:italic">Scheduled task</span>')
+            tokens_in = s.get('tokens_in', 0)
+            tokens_out = s.get('tokens_out', 0)
+            if tokens_in or tokens_out:
+                tokens_str = f'{_fmt_tokens(tokens_in)} in &middot; {_fmt_tokens(tokens_out)} out'
+            else:
+                tokens_str = '&mdash;'
             kind = s.get('kind', 'terminal')
             source = s.get('source', 'Terminal')
             badge = f'<span class="conv-badge kind-{kind}">{html_mod.escape(source)}</span>'
 
-            rows.append(f'''<div class="conv-row" data-kind="{kind}" onclick="window.location='/conversations/{s['id']}'">
+            rows.append(f'''<div class="conv-row" data-kind="{kind}" onclick="FX.go('/conversations/{s['id']}')">
                 {marker_svg}
                 <span class="conv-time">{time_str}</span>
                 {badge}
                 <span class="conv-info"><span class="conv-preview">{preview}</span></span>
-                <span class="conv-size">{size_str}</span>
+                <span class="conv-size">{tokens_str}</span>
             </div>''')
 
         sections_html.append(f'''<div class="conv-group-section" id="{tab_id}">
@@ -3751,7 +5242,7 @@ def serve_conversations():
             tabs.forEach(function(t) { t.classList.remove('active'); });
             if (tabs[current]) tabs[current].classList.add('active');
         }
-        window.addEventListener('scroll', updateActive);
+        FX.on(window, 'scroll', updateActive);
         updateActive();
     })();
     </script>'''
@@ -3765,13 +5256,14 @@ def serve_conversations():
     filter_js = '''<script>
     (function() {
         var index = document.getElementById('convIndex');
-        var chips = document.querySelectorAll('.conv-filter-chip');
+        var kindChips = document.querySelectorAll('.conv-filter-chip[data-filter]');
         var sections = document.querySelectorAll('.conv-group-section');
-        function apply(mode) {
+        var kindMode = localStorage.getItem('convFilter') || 'all';
+        function apply() {
             index.classList.remove('filter-conversations', 'filter-scheduled');
-            if (mode === 'conversations') index.classList.add('filter-conversations');
-            else if (mode === 'scheduled') index.classList.add('filter-scheduled');
-            chips.forEach(function(c) { c.classList.toggle('active', c.dataset.filter === mode); });
+            if (kindMode === 'conversations') index.classList.add('filter-conversations');
+            else if (kindMode === 'scheduled') index.classList.add('filter-scheduled');
+            kindChips.forEach(function(c) { c.classList.toggle('active', c.dataset.filter === kindMode); });
             sections.forEach(function(s) {
                 var visible = 0;
                 s.querySelectorAll('.conv-row').forEach(function(r) {
@@ -3780,14 +5272,21 @@ def serve_conversations():
                 s.style.display = visible === 0 ? 'none' : '';
             });
         }
-        var saved = localStorage.getItem('convFilter') || 'all';
-        chips.forEach(function(c) {
+        kindChips.forEach(function(c) {
             c.addEventListener('click', function() {
-                localStorage.setItem('convFilter', c.dataset.filter);
-                apply(c.dataset.filter);
+                kindMode = c.dataset.filter;
+                localStorage.setItem('convFilter', kindMode);
+                apply();
             });
         });
-        apply(saved);
+        agentChips.forEach(function(c) {
+            c.addEventListener('click', function() {
+                agentMode = c.dataset.agent;
+                localStorage.setItem('convAgentFilter', agentMode);
+                apply();
+            });
+        });
+        apply();
     })();
     </script>'''
 
@@ -3806,13 +5305,13 @@ def serve_conversations():
     return _render_page('Conversations', content)
 
 
-def _render_message_html(msg):
-    """Render a single conversation message dict to HTML. Shared by the
-    page route and the infinite-scroll API. Keeps skill/meta collapsing."""
+def _render_message_html(msg, ctx=None):
+    """Render one parsed-message dict to HTML, preserving skill/meta-collapse behavior."""
     role = msg['role']
     timestamp = msg.get('timestamp', '')
     is_meta = msg.get('is_meta', False)
     source_tool_id = msg.get('source_tool_id', '')
+    msg_index = msg.get('index')
     ts_display = ''
     if timestamp:
         try:
@@ -3821,22 +5320,30 @@ def _render_message_html(msg):
         except Exception:
             pass
 
-    role_label = 'You' if role == 'user' else DISPLAY_NAME
+    assistant_label = (ctx or {}).get('assistant_label', ASSISTANT_NAME)
+    extra_class = ''
+    if role == 'user':
+        blocks = msg.get('blocks', [])
+        if blocks and all(b.get('type') == 'tool_result' for b in blocks):
+            # A tool result echoed back is part of the tool exchange, not "YOU"
+            role_label = 'Tool Result'
+            extra_class = ' role-tool-result'
+        else:
+            role_label = _detect_user_speaker(blocks) or 'You'
+    else:
+        role_label = assistant_label
 
     # Detect skill/meta messages: collapse them
     if role == 'user' and is_meta and source_tool_id:
-        # Extract skill name from content if possible
         skill_name = ''
         for block in msg['blocks']:
             text = block.get('text', '')
             if isinstance(text, str) and 'Base directory for this skill' in text:
-                # Try to extract skill path
                 match = re.search(r'skills/([^/\n]+)', text)
                 if match:
                     skill_name = match.group(1)
                 break
         label = f'Skill loaded: {skill_name}' if skill_name else 'Skill prompt loaded'
-        # Count approximate size
         total_chars = sum(len(b.get('text', '')) for b in msg['blocks'])
         size_note = f'{total_chars:,} chars'
 
@@ -3846,26 +5353,69 @@ def _render_message_html(msg):
                         <span class="skill-icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5v11"/><path d="M3.5 5l3.5-3.5L10.5 5"/><path d="M2 8.5h10"/><path d="M4 11h6"/></svg></span>
                         {html_mod.escape(label)} <span class="skill-size">({size_note})</span>
                     </summary>
-                    <div class="skill-body">{''.join(_render_conversation_block(b, i) for i, b in enumerate(msg['blocks']))}</div>
+                    <div class="skill-body">{''.join(_render_conversation_block(b, i, ctx, msg_index) for i, b in enumerate(msg['blocks']))}</div>
                 </details>
             </div>'''
 
     blocks_html = []
     for i, block in enumerate(msg['blocks']):
-        blocks_html.append(_render_conversation_block(block, i))
+        blocks_html.append(_render_conversation_block(block, i, ctx, msg_index))
 
-    return f'''<div class="conv-message role-{role}">
-            <div class="conv-role-label">{role_label} <span class="conv-ts">{ts_display}</span></div>
+    return f'''<div class="conv-message role-{role}{extra_class}">
+            <div class="conv-role-label">{html_mod.escape(role_label)} <span class="conv-ts">{ts_display}</span></div>
             {"".join(blocks_html)}
         </div>'''
+
+
+@app.route('/api/conversations/<session_id>/block/<int:msg_idx>/<int:block_idx>')
+def api_conversation_block(session_id, msg_idx, block_idx):
+    """Full pretty-printed content of one tool_use/tool_result block (lazy full I/O)."""
+    messages = parse_conversation(session_id)
+    if messages is None or msg_idx >= len(messages):
+        return jsonify(error='not found'), 404
+    blocks = messages[msg_idx].get('blocks', [])
+    if block_idx >= len(blocks):
+        return jsonify(error='not found'), 404
+    b = blocks[block_idx]
+    btype = b.get('type', '')
+
+    if btype == 'tool_use':
+        try:
+            text = json.dumps(b.get('input', {}), indent=2, ensure_ascii=False)
+        except Exception:
+            text = str(b.get('input', ''))
+    elif btype == 'tool_result':
+        content = b.get('content', '')
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    parts.append(c.get('text', ''))
+            text = '\n'.join(parts)
+            if not text.strip():
+                try:
+                    text = json.dumps(content, indent=2, ensure_ascii=False)
+                except Exception:
+                    text = str(content)
+        else:
+            text = str(content)
+    else:
+        try:
+            text = json.dumps(b, indent=2, ensure_ascii=False)
+        except Exception:
+            text = str(b)
+
+    cap = 400_000
+    if len(text) > cap:
+        text = text[:cap] + f'\n\n… ({len(text) - cap:,} more characters truncated)'
+    return jsonify(text=_subst_slack_ids(text), type=btype)
 
 
 @app.route('/api/conversations/<session_id>/messages')
 def api_conversation_messages(session_id):
     """Return a rendered chunk of conversation messages for infinite scroll."""
-    visitor = get_visitor()
-    if visitor["ring"] > 1:
-        return jsonify(error='Access denied — supervisors only'), 403
     messages = parse_conversation(session_id)
     if messages is None:
         return jsonify(error=f'Conversation not found: {session_id}'), 404
@@ -3882,17 +5432,15 @@ def api_conversation_messages(session_id):
     offset = max(0, offset)
     limit = max(1, min(limit, 300))
 
+    ctx = _conversation_ctx(session_id)
     chunk = messages[offset:offset + limit]
-    html = ''.join(_render_message_html(m) for m in chunk)
+    html = ''.join(_render_message_html(m, ctx) for m in chunk)
     return jsonify(html=html, offset=offset, count=len(chunk), total=total)
 
 
 @app.route('/api/conversations/<session_id>/live')
 def api_conversation_live(session_id):
     """Return messages after index N for a (possibly live) conversation session."""
-    visitor = get_visitor()
-    if visitor["ring"] > 1:
-        return jsonify({'error': 'Access denied — supervisors only'}), 403
     messages = parse_conversation(session_id)
     if messages is None:
         return jsonify({'error': 'not found'}), 404
@@ -3918,15 +5466,12 @@ def api_conversation_live(session_id):
 @app.route('/conversations/<session_id>')
 def serve_conversation_detail(session_id):
     """Render a single conversation session."""
-    visitor = get_visitor()
-    if visitor["ring"] > 1:
-        return Response('Access denied — supervisors only', status=403)
     messages = parse_conversation(session_id)
     if messages is None:
         return Response(f'Conversation not found: {session_id}', status=404)
 
     # Get file metadata
-    f = CONVERSATIONS_DIR / f'{session_id}.jsonl'
+    f = _find_session_file(session_id)
     stat = f.stat()
     dt = datetime.fromtimestamp(stat.st_mtime)
     is_live = (datetime.now() - dt).total_seconds() < 120
@@ -3962,12 +5507,22 @@ def serve_conversation_detail(session_id):
     assistant_count = sum(1 for m in messages if m['role'] == 'assistant')
     date_str = dt.strftime('%A, %B %-d, %Y at %-H:%M')
 
+    ctx = _conversation_ctx(session_id)
+
+    # Boot header: model from the first assistant message.
+    model = next((m.get('model') for m in messages
+                  if m['role'] == 'assistant' and m.get('model')), '')
+    boot_chips = []
+    if model:
+        boot_chips.append(f'<span class="boot-chip">model: {html_mod.escape(model)}</span>')
+    boot_strip = f'<div class="conv-boot-strip">{"".join(boot_chips)}</div>' if boot_chips else ''
+
     # Render messages (limit initial render for very large conversations)
     max_initial = int(request.args.get('limit', 100))
     total_msgs = len(messages)
     render_msgs = messages[:max_initial]
 
-    msgs_html = [_render_message_html(msg) for msg in render_msgs]
+    msgs_html = [_render_message_html(msg, ctx) for msg in render_msgs]
 
     # Infinite-scroll sentinel if truncated
     load_more = ''
@@ -4018,7 +5573,7 @@ def serve_conversation_detail(session_id):
                         var nearBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 200);
                         var tmp = document.createElement('div');
                         tmp.innerHTML = data.html;
-                        var loadMore = container.querySelector('#conv-sentinel');
+                        var loadMore = container.querySelector('.conv-load-more');
                         var newNodes = [];
                         while (tmp.firstChild) {
                             var node = tmp.firstChild;
@@ -4037,13 +5592,30 @@ def serve_conversation_detail(session_id):
                 .catch(function() {});
         }
 
-        timer = setInterval(poll, 5000);
+        timer = FX.every(5000, poll);
     })();
     </script>'''
 
+    # Slack deep link
+    slack_url = get_slack_url_for_session(session_id)
+    slack_button = ''
+    if slack_url:
+        slack_button = f'''<a href="{html_mod.escape(slack_url)}" target="_blank" rel="noopener" class="conv-slack-btn" title="Open this thread in Slack">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 1.5v3h-3"/><path d="M2.5 4.5c0-.8.7-1.5 1.5-1.5h1.5"/><path d="M10.5 1.5v3h3"/><path d="M13.5 4.5c0-.8-.7-1.5-1.5-1.5h-1.5"/><path d="M5.5 14.5v-3h-3"/><path d="M2.5 11.5c0 .8.7 1.5 1.5 1.5h1.5"/><path d="M10.5 14.5v-3h3"/><path d="M13.5 11.5c0 .8-.7 1.5-1.5 1.5h-1.5"/><path d="M1.5 8h13"/></svg>
+            Open in Slack
+        </a>'''
+
+    # Sidechain (agent) transcripts link back to their parent session
+    if '--agent-' in session_id:
+        parent_id = session_id.split('--agent-', 1)[0]
+        back_link = f'<a href="/conversations/{html_mod.escape(parent_id)}" class="conv-detail-back">&larr; Parent session</a>'
+    else:
+        back_link = '<a href="/conversations" class="conv-detail-back">&larr; All conversations</a>'
+
     content = f'''<div class="conv-detail">
         <div class="conv-detail-topbar">
-            <a href="/conversations" class="conv-detail-back">&larr; All conversations</a>
+            {back_link}
+            {slack_button}
         </div>
         <div class="conv-detail-header">
             <h1>{date_str}</h1>
@@ -4054,6 +5626,7 @@ def serve_conversation_detail(session_id):
                 <span style="opacity:0.5">{session_id[:8]}</span>
                 {'<span class="conv-live-indicator" id="conv-live-indicator"><span class="conv-live-dot"></span>live</span>' if is_live else ''}
             </div>
+            {boot_strip}
         </div>
         {"".join(msgs_html)}
         {load_more}
@@ -4076,6 +5649,27 @@ def serve_conversation_detail(session_id):
         }});
     }}
     convRenderMarkdown(document);
+
+    // Full tool I/O: lazily fetch the complete input/result on first expand
+    FX.on(document, 'toggle', function(e) {{
+        var d = e.target;
+        if (!d.classList || !d.classList.contains('tool-full') || !d.open) return;
+        var pre = d.querySelector('.tool-full-pre');
+        if (!pre || pre.dataset.state === 'loaded' || pre.dataset.state === 'loading') return;
+        pre.dataset.state = 'loading';
+        pre.textContent = 'loading…';
+        fetch('/api/conversations/' + encodeURIComponent(d.dataset.session) +
+              '/block/' + d.dataset.msg + '/' + d.dataset.block)
+            .then(function(r) {{ return r.json(); }})
+            .then(function(data) {{
+                pre.textContent = data.text || '(empty)';
+                pre.dataset.state = 'loaded';
+            }})
+            .catch(function() {{
+                pre.textContent = 'failed to load — close and reopen to retry';
+                pre.dataset.state = 'empty';
+            }});
+    }}, true);
 
     // Infinite scroll: load older messages as the sentinel comes into view
     (function() {{
@@ -4117,9 +5711,9 @@ def serve_conversation_detail(session_id):
             return r.top < window.innerHeight && r.bottom > 0;
         }}
 
-        var observer = new IntersectionObserver(function(entries) {{
+        var observer = FX.watch(new IntersectionObserver(function(entries) {{
             entries.forEach(function(entry) {{ if (entry.isIntersecting) loadMore(); }});
-        }}, {{ rootMargin: '400px' }});
+        }}, {{ rootMargin: '400px' }}));
         observer.observe(sentinel);
     }})();
     </script>{live_poll_js}'''
@@ -4185,8 +5779,12 @@ def save_comment():
                 'timestamp': datetime.now().isoformat(),
                 'resolved': False,
             }
-            # Element comments carry the CSS selector of what they point at
-            for extra in ('selector', 'snippet', 'tag'):
+            # Optional fields, stored only when the client sends them:
+            #   selector/snippet/tag -> HTML element comments (the overlay)
+            #   author               -> markdown rail comments
+            # Neither client sends the other's fields, so each sidecar shape
+            # is unchanged.
+            for extra in ('selector', 'snippet', 'tag', 'author'):
                 if data.get(extra):
                     comment[extra] = data[extra]
             comments.append(comment)
@@ -4703,7 +6301,7 @@ def _serve_directory(p, visitor=None):
     # Hero section for home page
     hero_html = ''
     if str(p) == str(BASE_DIR):
-        hero_html = _home_hero()
+        hero_html = _home_hero() + _trust_battery_widget()
 
     # Slim filter/sort control row — only for directories with 8+ entries
     controls_html = ''
@@ -4763,13 +6361,17 @@ def _serve_file(p):
                 </div>
                 <div id="cm-editor"></div>
             </div>''' if is_editable else ''
-            content = f'''<div class="file-content">
+            content = f'''<div class="file-content" data-file-path="{html_mod.escape(str(p))}">
                 <div class="edit-bar">
                     <span class="filename" style="margin-bottom:0; padding-bottom:0; border-bottom:none;">{p.name} &middot; {human_size(p.stat().st_size)}</span>
+                    <span id="comment-badge" class="comment-badge" style="display:none;"></span>
                     {edit_button}
                 </div>
                 <script id="markdown-raw" type="text/plain">{raw_for_script}</script>
-                <div id="markdown-rendered" class="markdown-body"></div>
+                <div class="md-page">
+                    <div id="markdown-rendered" class="markdown-body"></div>
+                    <aside id="comment-rail" class="comment-rail"></aside>
+                </div>
                 {edit_area}
             </div>'''
         elif ext == '.html':
@@ -5296,8 +6898,6 @@ def serve_models():
         .replace('__DATA__', payload) \
         .replace('__JS__', _MODELS_JS)
     return _render_page('Models', content)
-
-
 MODELS_PAGE_HTML = '''<div class="models-page">
     <h1>Models</h1>
     <div class="subtitle">Which model answers in each Slack channel and DM. Changes save on their own; new threads pick them up right away, open threads on their next reply.</div>
@@ -5343,14 +6943,12 @@ MODELS_PAGE_HTML = '''<div class="models-page">
 def save_models():
     visitor = get_visitor()
     if visitor["ring"] > 1:
-        return Response('Access denied — supervisors only', status=403)
+        return jsonify(error='Access denied — supervisors only'), 403
     body = request.get_json(silent=True) or {}
     ok, payload = save_model_config(body.get('config'), body.get('sha', ''))
     if not ok:
         return jsonify(payload), (409 if payload.get('stale') else 400)
     return jsonify(payload)
-
-
 # ============================================================
 # ENTRY POINT
 # ============================================================
