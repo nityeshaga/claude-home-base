@@ -49,13 +49,12 @@ DISPLAY_NAME = os.environ.get("FILE_EXPLORER_NAME", "Your AI Employee")
 # seeing the "unknown visitor" view, ask them to run `tailscale ip -4` on their
 # machine and add the IP here. On macOS App Store Tailscale, the IP is visible
 # in the Tailscale menu bar icon under "This machine."
+# Replace every entry below with your own tailnet's IPs — the defaults are
+# placeholders and match nobody.
 TAILSCALE_USERS = {
-    "100.123.10.100": {"name": "Claudie", "ring": 0},   # this machine (self)
-    "100.71.120.89":  {"name": "Nityesh", "ring": 1},
-    # Add more team members here as they connect:
-    # "100.x.x.x": {"name": "Natalia", "ring": 1},
-    # "100.x.x.x": {"name": "Mike", "ring": 2},
-    # "100.x.x.x": {"name": "Brooker", "ring": 2},
+    # "100.x.x.x": {"name": "This machine", "ring": 0},
+    # "100.x.x.x": {"name": "Supervisor",   "ring": 1},
+    # "100.x.x.x": {"name": "Teammate",     "ring": 2},
 }
 
 # Paths restricted by ring. Ring N can see everything rings > N cannot.

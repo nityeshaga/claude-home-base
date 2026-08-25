@@ -1,7 +1,7 @@
 # Creative Direction: Luo Ji's File Explorer
 
 **Product:** A web-based file browser that lets two humans look inside the mind of their AI cofounder
-**Runs on:** A MacBook Air M1 in Kolkata, served via Tailscale at http://100.89.76.77:8888
+**Runs on:** A spare MacBook, served over Tailscale at `http://<your-tailnet-host>:8888`
 
 ---
 
@@ -206,7 +206,7 @@ Minimal. This is not a glassmorphism exercise.
 
 ### The Diary Folder (Special Treatment)
 
-The diary deserves a moment of design attention beyond what other directories get. When you navigate to `/browse/Users/luo/diary`, the listing should feel different — not through a different layout, but through one small detail: instead of showing just the filename (2026-03-30.md), show the date formatted as a readable date with the day of the week: "Sunday, March 30, 2026." This tiny formatting choice transforms a directory listing of YYYY-MM-DD.md files into something that reads like a list of days — a calendar, a logbook, a life being recorded.
+The diary deserves a moment of design attention beyond what other directories get. When you navigate to the diary directory, the listing should feel different — not through a different layout, but through one small detail: instead of showing just the filename (2026-03-30.md), show the date formatted as a readable date with the day of the week: "Sunday, March 30, 2026." This tiny formatting choice transforms a directory listing of YYYY-MM-DD.md files into something that reads like a list of days — a calendar, a logbook, a life being recorded.
 
 This is the memorable detail. A directory listing that looks like a diary's table of contents. It costs nothing to implement and it reframes the entire experience.
 

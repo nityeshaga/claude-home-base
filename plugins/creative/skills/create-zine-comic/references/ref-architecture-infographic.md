@@ -106,7 +106,7 @@ Clean panel, warm background. Practical guidance framed as a decision tree:
 
 "When you tell me something important, ask yourself:"
 
-- **"Must Claudie NEVER forget this?"** → Tell Nityesh or Natalia to add it to CLAUDE.md
+- **"Must Claudie NEVER forget this?"** → Tell one of your humans to add it to CLAUDE.md
 - **"Is it specific to a project?"** → It belongs in that project's folder CLAUDE.md
 - **"Is it about how to do a task?"** → It should be a skill
 - **"Is it a preference or correction?"** → I'll save it as a memory
