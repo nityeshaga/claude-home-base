@@ -518,6 +518,9 @@ class LiveSession:
     pending_reactions: list = field(default_factory=list)
     # Highest 100k context threshold already announced in the thread
     ctx_notified_level: int = 0
+    # Model last announced in the thread (from message.model on assistant
+    # events — the served model, not the --model flag). "" = not yet announced.
+    model_notified: str = ""
     # Messages sent into this process, for the per-model prompt cadence. Resets
     # when the thread's process is respawned after an idle-out.
     turns_sent: int = 0
@@ -726,6 +729,39 @@ def _post_skill_notice(session: LiveSession, skill: str, args_str: str) -> None:
         logger.warning(f"Failed to post skill notice: {e}")
 
 
+def _post_model_notice(session: LiveSession, model: str, prev: str) -> None:
+    """Post a small grey context-block notice naming the serving model.
+
+    `model` comes from message.model on the assistant event — the API's report
+    of which model actually produced the response, so it stays truthful under
+    silent fallbacks (e.g. opus-5 → opus-4-8). Posted once per session and
+    again only if the served model ever changes.
+    """
+    try:
+        note = f"model: {model}" if not prev else f"model changed: {prev} → {model}"
+        slack_client.chat_postMessage(
+            channel=session.channel, thread_ts=session.thread_ts,
+            text=note,
+            blocks=[{"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f":robot_face: _{note}_"}]}],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to post model notice: {e}")
+
+
+def _track_model(session: LiveSession, data: dict) -> None:
+    """Announce the served model on the first main-loop assistant event of a
+    session, and re-announce if it changes mid-thread (fallback routing).
+    Subagent events are skipped — they may run a different model than the
+    thread itself."""
+    if data.get("parent_tool_use_id"):
+        return
+    model = data.get("message", {}).get("model") or ""
+    if model and model != session.model_notified:
+        _post_model_notice(session, model, session.model_notified)
+        session.model_notified = model
+
+
 def _track_context(session: LiveSession, data: dict) -> None:
     """Watch usage on assistant events; announce each new 100k threshold.
 
@@ -779,6 +815,7 @@ def _reader_loop(session: LiveSession) -> None:
                     session.session_id = sid
 
             elif msg_type == "assistant":
+                _track_model(session, data)
                 _track_context(session, data)
                 content = data.get("message", {}).get("content", [])
                 # Subagent (Agent/Task) events stream through the same stdout
