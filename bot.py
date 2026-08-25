@@ -2057,8 +2057,11 @@ def register_forward_endpoint():
 # File browser blueprint (Google OAuth, restricted to ALLOWED_EMAIL_DOMAIN)
 # ---------------------------------------------------------------------------
 
-import file_browser
-file_browser.init_app(flask_app)
+try:
+    import file_browser
+    file_browser.init_app(flask_app)
+except ImportError:
+    logger.warning("file_browser module not found — file browser feature disabled")
 
 
 
