@@ -44,6 +44,7 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk import WebClient
 
 import bot_codex  # alternate backend: rooms with "backend": "codex" route here
+import reconnect_sweep
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -2204,6 +2205,11 @@ def main():
 
     # Garbage-collect stale forward entries (>14 days old) from prior runs
     _gc_forwards()
+
+    # Find out who tried to reach us while we were down. The local instruments
+    # (audit log, session files) are written by this process, so after an outage
+    # they are perfectly clean and completely wrong. Slack is the only witness.
+    reconnect_sweep.startup(slack_client, SUPERVISOR_USERS | AUTHORIZED_USERS)
 
     # Start idle session cleanup thread
     threading.Thread(target=_cleanup_idle_sessions, daemon=True).start()
