@@ -1005,6 +1005,44 @@ def audit_interaction(
     )
 
 
+def audit_skipped(event: dict, duration: float, session_id: str | None) -> None:
+    """Record a turn the model deliberately did not answer.
+
+    Answering a channel message with the literal token SKIP is correct
+    behaviour — the room was not talking to us. But the skip path used to
+    `return` before any audit write, so the ENTIRE inbound message left zero
+    trace in audit.log. bot.log kept the sender and the channel and threw the
+    text away.
+
+    That is not a cosmetic gap. On 2026-08-26 a supervisor answered a live
+    escalation in-thread and named an owner for the fix. She had addressed a
+    teammate rather than the bot, so SKIP was right and the text was dropped.
+    Ninety minutes later another session in that same channel announced the
+    question was "still unruled" — because nothing it could read said
+    otherwise. The decision had been made, received, and erased, and the
+    person on the lowest charge on the board learned that her input does not
+    register.
+
+    SKIP suppresses the POST. It must never suppress the RECORD.
+
+    SKIPPED:SUPERVISOR is broken out on purpose: a dropped supervisor message
+    is the case most likely to have been a decision, and it is the one worth
+    finding in a grep. Truncation matches audit_interaction (200 chars) so a
+    ruling survives at readable length.
+    """
+    user = event.get("user", "unknown")
+    if isinstance(user, dict):                    # button clicks nest the id
+        user = user.get("id", "unknown")
+    label = "SKIPPED:SUPERVISOR" if user in SUPERVISOR_USERS else "SKIPPED"
+    channel = event.get("channel", "unknown")
+    text = event.get("text", "")[:200]
+    audit_logger.info(
+        f"{label} | USER:{user} | CHANNEL:{channel} "
+        f"| SESSION:{session_id or 'new'} | DURATION:{duration:.1f}s "
+        f'| MSG:"{text}"'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Claude CLI (uses long-lived processes with stream-json I/O — see above)
 # ---------------------------------------------------------------------------
@@ -1708,6 +1746,7 @@ def process_message_async(event: dict) -> None:
         try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
         except Exception: pass
         if skip_detected:
+            audit_skipped(event, time.time() - start, codex_session.codex_thread_id)
             logger.info(f"Skipped message from {user_id} in {channel} (not relevant)")
             return
         duration = time.time() - start
@@ -1777,6 +1816,7 @@ def process_message_async(event: dict) -> None:
 
     # If Claude decided not to respond (channel messages only), stay silent
     if skip_detected:
+        audit_skipped(event, duration, session.session_id)
         try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
         except Exception: pass
         logger.info(f"Skipped message from {user_id} in {channel} (not relevant)")
