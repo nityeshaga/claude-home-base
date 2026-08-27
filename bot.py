@@ -2178,7 +2178,16 @@ def main():
             if ts:
                 print(ts)
         else:
-            send_to_channel(args.channel[0], args.channel[1], thread_ts=args.thread)
+            # Print the ts, symmetric with --send and with the --with-votes
+            # branch above. A caller that cannot see WHERE its message landed
+            # cannot verify that it landed at all, and "rc=0" is a claim about
+            # the process, not about Slack. The promise ledger
+            # (scripts/promise.py) refuses to mark an obligation kept without
+            # a ts, so without this line a channel-delivered promise could
+            # only ever be recorded as failed.
+            ts = send_to_channel(args.channel[0], args.channel[1], thread_ts=args.thread)
+            if ts:
+                print(ts)
         return
 
     if args.history:
