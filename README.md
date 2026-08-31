@@ -46,7 +46,7 @@ plugins/
 ├── creative/           # Creative direction, writing, brainstorming
 │   └── skills/
 │       ├── creative-lead/    # Creative direction for any project
-│       ├── explorable-explanation-creator/  # Topic → tree of no-scroll interactive HTML pages
+│       ├── explorable-explanations/  # Topic → tree of no-scroll, single-viewport interactive pages
 │       ├── lets-brainstorm/  # Timed coaching sessions
 │       ├── help-me-write/    # Collaborative writing (keeps your voice)
 │       └── interview-me/     # Timed discovery interviews
