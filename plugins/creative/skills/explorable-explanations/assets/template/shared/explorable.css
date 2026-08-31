@@ -1,0 +1,177 @@
+/* explorable.css — structural base. Visual identity comes from design-plan.md via
+ * custom properties; override the :root block in shared/theme.css, never edit here.
+ * theme.css MAY also restyle the chrome (.ex-chrome, .ex-crumbs, .ex-map-toggle, .ex-map,
+ * .ex-minimap, .ex-mm-*) — those class names are stable. The minimap's glyphs and layout
+ * are overridable in shared/theme.js (see explorable.js header).
+ *
+ * Contract:
+ *  - Desktop (≥ 900px wide): the page fits one viewport at 1440×900. No vertical scroll.
+ *  - Mobile (< 900px): text and stage stack; scrolling within the page is allowed.
+ *  - .ex-text holds the prose; .ex-stage holds the interactive. Both required.
+ */
+
+:root {
+  --ex-ground: #ffffff;
+  --ex-ink: #1a1a1a;
+  --ex-muted: #6b6b6b;
+  --ex-accent: #2f6fed;
+  --ex-accent-2: #e0a100;
+  --ex-warn: #d13d3d;
+  --ex-line: #e3e3e3;
+  --ex-font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ex-font-display: var(--ex-font-body);
+  --ex-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ex-text-col: 38%;          /* width of the prose column on desktop */
+  --ex-gutter: clamp(16px, 3vw, 48px);
+  --ex-radius: 10px;
+  --ex-chrome-h: 44px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: var(--ex-font-body);
+  color: var(--ex-ink);
+  background: var(--ex-ground);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- one-viewport layout ---------- */
+.ex-page {
+  display: grid;
+  grid-template-columns: var(--ex-text-col) 1fr;
+  grid-template-rows: 1fr;
+  gap: var(--ex-gutter);
+  padding: calc(var(--ex-chrome-h) + 12px) var(--ex-gutter) var(--ex-gutter);
+  height: 100dvh;
+  overflow: hidden;            /* desktop: nothing scrolls */
+}
+.ex-text {
+  align-self: center;
+  max-width: 44ch;
+  font-size: clamp(16px, 1.15vw, 20px);
+}
+.ex-text h1 {
+  font-family: var(--ex-font-display);
+  font-size: clamp(26px, 2.4vw, 40px);
+  line-height: 1.1; margin: 0 0 0.6em;
+}
+.ex-text p { margin: 0 0 0.9em; }
+.ex-stage {
+  position: relative;
+  min-height: 0; min-width: 0;
+  display: grid; place-items: center;
+}
+.ex-stage > svg, .ex-stage > canvas { max-width: 100%; max-height: 100%; }
+
+/* the figure lives next to the words that describe it (Strogatz) — keep them level */
+@media (max-width: 899px) {
+  .ex-page {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    height: auto; min-height: 100dvh;
+    overflow: visible;           /* mobile: scrolling inside a page is fine */
+    padding-top: calc(var(--ex-chrome-h) + 8px);
+  }
+  .ex-text { max-width: none; font-size: 17px; }
+  .ex-stage { min-height: 60dvh; }
+}
+
+/* ---------- embedded forward links ---------- */
+.ex-link {
+  color: var(--ex-accent); text-decoration: none;
+  border-bottom: 2px solid currentColor; padding-bottom: 1px;
+  font-weight: 600; cursor: pointer;
+  transition: opacity .25s, transform .25s;
+}
+.ex-link:hover, .ex-link:focus-visible { transform: translateX(2px); }
+.ex-link:focus-visible { outline: 2px solid var(--ex-accent); outline-offset: 3px; border-radius: 2px; }
+.ex-link.ex-locked { opacity: .25; pointer-events: none; border-bottom-style: dotted; }
+/* ways forward: a clearly navigational block after the prose */
+.ex-next { display: flex; flex-direction: column; gap: 8px; margin-top: 1.4em; padding-top: 1em; border-top: 1px solid var(--ex-line); }
+.ex-next .ex-link { display: inline-block; border-bottom: none; padding: 10px 14px; border: 1px solid var(--ex-line); border-radius: var(--ex-radius); width: fit-content; }
+.ex-next .ex-link { display: grid; grid-template-columns: 1fr auto; column-gap: 10px; align-items: baseline; }
+.ex-next .ex-link::after { content: "→"; grid-column: 2; grid-row: 1; }
+.ex-next .ex-link:hover, .ex-next .ex-link:focus-visible { border-color: var(--ex-accent); transform: none; }
+.ex-next small { display: block; grid-column: 1; font-weight: 400; color: var(--ex-muted); font-size: .8em; }
+/* a forward link inside the stage (success-state doorway) */
+.ex-stage .ex-link {
+  position: absolute; right: 8px; bottom: 8px;
+  background: var(--ex-ground); border: 1px solid var(--ex-line); border-radius: var(--ex-radius);
+  padding: 8px 14px;
+}
+.ex-hatch {
+  position: absolute; left: 8px; bottom: 8px;
+  background: transparent; color: var(--ex-muted); border: 1px dashed var(--ex-line);
+  border-radius: var(--ex-radius); padding: 6px 12px; font: inherit; font-size: 0.85em; cursor: pointer;
+}
+
+/* ---------- chrome: breadcrumb, position, map ---------- */
+.ex-chrome {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--ex-chrome-h);
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 var(--ex-gutter);
+  font-size: 13px; color: var(--ex-muted);
+  background: color-mix(in srgb, var(--ex-ground) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--ex-line);
+  z-index: 10;
+}
+.ex-crumbs { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; flex: 1; min-width: 0; }
+.ex-crumbs li + li::before { content: "›"; margin-right: 6px; opacity: .5; }
+.ex-crumbs a { color: inherit; text-decoration: none; }
+.ex-crumbs a:hover { color: var(--ex-ink); }
+.ex-crumbs li[aria-current] { color: var(--ex-ink); font-weight: 600; }
+.ex-pos { white-space: nowrap; }
+.ex-map-toggle {
+  font: inherit; font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+  background: transparent; color: inherit; border: 1px solid var(--ex-line); border-radius: 999px;
+  padding: 4px 10px; cursor: pointer;
+}
+.ex-map-toggle[aria-expanded="true"] { background: var(--ex-ink); color: var(--ex-ground); }
+.ex-map {
+  position: fixed; top: var(--ex-chrome-h); right: var(--ex-gutter);
+  background: var(--ex-ground); border: 1px solid var(--ex-line); border-radius: var(--ex-radius);
+  padding: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.12); z-index: 11;
+  min-width: 260px; max-width: min(640px, 90vw); max-height: 70vh; overflow: auto;
+}
+.ex-minimap { display: block; width: auto; height: auto; max-width: min(600px, 86vw); max-height: 62vh; }
+.ex-mm-edge { stroke: var(--ex-line); stroke-width: 2; }
+.ex-mm-edge.seen { stroke: var(--ex-ink); }
+.ex-mm-rejoin { fill: none; stroke: var(--ex-muted); stroke-width: 1.5; stroke-dasharray: 3 3; }
+/* default glyphs; a project's theme.js may draw its own and style them in theme.css */
+.ex-mm-node > :is(circle, rect, polygon, path, ellipse) { fill: var(--ex-ground); stroke: var(--ex-ink); stroke-width: 2; }
+.ex-mm-node.visited > :is(circle, rect, polygon, path, ellipse) { fill: var(--ex-ink); }
+.ex-mm-node.current > :is(circle, rect, polygon, path, ellipse) { fill: var(--ex-accent); stroke: var(--ex-accent); }
+.ex-mm-node.locked > :is(circle, rect, polygon, path, ellipse) { stroke: var(--ex-line); fill: var(--ex-ground); }
+.ex-mm-node.fork > :is(circle, rect, polygon, path, ellipse) { stroke-dasharray: 2 2; }
+.ex-mm-node:is(:hover, :focus-visible) > :is(circle, rect, polygon, path, ellipse) { stroke-width: 3; }
+.ex-mm-node text { fill: var(--ex-muted); stroke: none; font: 10px var(--ex-font-body); }
+.ex-mm-node.current text { fill: var(--ex-ink); }
+.ex-mm-node:focus-visible { outline: none; }
+
+.ex-fork-memory { font-size: .85em; color: var(--ex-muted); margin-top: .5em; }
+.ex-deeplink {
+  position: fixed; left: var(--ex-gutter); bottom: var(--ex-gutter);
+  background: var(--ex-ground); border: 1px solid var(--ex-line); border-radius: var(--ex-radius);
+  padding: 8px 12px; font-size: 13px; color: var(--ex-muted); z-index: 10;
+}
+.ex-deeplink a { color: var(--ex-accent); }
+
+@media (max-width: 899px) {
+  .ex-crumbs li:not(:nth-last-child(-n+2)) { display: none; }  /* parent + current only */
+  .ex-pos { display: none; }
+}
+
+/* ---------- motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+/* ---------- utilities ---------- */
+.ex-muted { color: var(--ex-muted); }
+.ex-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ex-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 14px; }
+.ex-controls label { display: inline-flex; gap: 6px; align-items: center; }
+.ex-controls input[type=range] { accent-color: var(--ex-accent); }
