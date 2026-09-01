@@ -53,10 +53,10 @@ Project folder: `<name>-explorable/` (layout in `references/build-guide.md` §2)
 
 ### 1. Persona — with the user, briefly
 
-`references/specs.md` §1. A few questions: who is this for, what should they be able to do
+`references/specs.md` §1. What it needs: who is this for, what should they be able to do
 or explain afterwards, how much ground should it cover and how deep may it go, tone, what
-they already know. Draft
-`persona.md`, get sign-off. The known/unknown term lists are a reading-level guide that
+they already know. Answer from what the user has already given; ask only what's missing.
+Draft `persona.md`, get sign-off. The known/unknown term lists are a reading-level guide that
 reviewers can check against; they are not a quota.
 
 ### 2. Central question

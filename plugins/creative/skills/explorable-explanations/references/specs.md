@@ -42,7 +42,8 @@ introduce them, name them, connect them to something they know. The list is a gu
 reviewers, not a quota for pages.
 ```
 
-Produce it in a short dialogue with the user (3–5 questions), draft, show, get sign-off.
+Fill it from the request and any source material first; ask the user only what's still
+missing, then draft, show, get sign-off.
 If the user says "you decide," choose the perplexed adult non-specialist and say so.
 
 ## 2. question.md
