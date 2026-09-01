@@ -1,6 +1,6 @@
 ---
 name: explorable-explanations
-description: Build an explorable explanation — a tree of short, visual, single-viewport web pages (HTML+CSS+JS) that explains a topic one idea per page, where depth is expressed as navigation rather than scrolling, in the tradition of Nicky Case and Bret Victor. Use this whenever the user wants to explain, teach, or make someone understand a concept, system, piece of research, framework, or argument as a set of interlinked pages instead of one long scrolling page; says "explorable", "explorable explanation", "interactive explainer", "learn by playing", "playable essay", "Nicky Case style", "Parable of the Polygons style", or "like Bret Victor"; or asks for a website/one-pager that teaches something and would benefit from being split into a tree. Also use it to turn an existing article, paper, lecture, or mental model into something a reader can navigate at their own depth. Uses subagents where they pay off (a visual advisor, a builder per playable, independent clean-slate reviewers).
+description: Build an explorable explanation — a tree of short, visual, single-viewport web pages (HTML+CSS+JS) that explains a topic a page at a time, where depth is expressed as navigation rather than scrolling, in the tradition of Nicky Case and Bret Victor. Use this whenever the user wants to explain, teach, or make someone understand a concept, system, piece of research, framework, or argument as a set of interlinked pages instead of one long scrolling page; says "explorable", "explorable explanation", "interactive explainer", "learn by playing", "playable essay", "Nicky Case style", "Parable of the Polygons style", or "like Bret Victor"; or asks for a website/one-pager that teaches something and would benefit from being split into a tree. Also use it to turn an existing article, paper, lecture, or mental model into something a reader can navigate at their own depth. Uses subagents where they pay off (a visual advisor, a builder per playable, independent clean-slate reviewers).
 ---
 
 # Explorable Explanations
@@ -9,8 +9,9 @@ When someone asks for a beautiful HTML page that explains a piece of research, t
 is one long scroll: everything the topic has to say, stacked, and the reader scrolls
 through all of it whether they care or not. An explorable explanation is the levelled-up
 alternative. The same explanation is split into a **tree of short pages**, each fitting one
-laptop viewport and carrying one idea, where every page is one step deeper into the rabbit
-hole than the page above it. The reader chooses which rabbit holes to follow. Depth is
+laptop viewport and carrying no more than one idea — an idea that needs room gets several
+pages, each taking a piece of it — where every page is one step deeper into the rabbit hole
+than the page above it. The reader chooses which rabbit holes to follow. Depth is
 navigation, not scrolling.
 
 A page is, by default, what a page in a good explanatory article is: a short piece of prose
@@ -139,7 +140,9 @@ carries reader state, so mid-tree links are shareable.
   still read as a clear, connected account of the topic. Visuals deepen; prose explains.
 - **Love the question first, end with the reader's own.** Hook needs no prior knowledge;
   each page picks up where its parent left off; every path ends with a proper close.
-- **One idea per viewport.** If it doesn't fit, it's two ideas or it's the wrong medium.
+- **At most one idea per viewport.** A page never holds two; an idea often takes several.
+  If it doesn't fit, either it's two ideas, or it's one that wants unfolding across pages,
+  or it's the wrong medium.
 - **Interaction where it earns its place.** A playable when operating the thing is the
   lesson; otherwise the visual that shows it best.
 - **Depth is navigation.** The ways forward from a page are obvious and say where they

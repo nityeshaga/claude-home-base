@@ -81,8 +81,8 @@ floor as body text — a label that needs to go under ~12px means the figure nee
 restructuring, not smaller type.
 
 **Length.** However much prose the idea needs, within the viewport — in practice a couple
-of short paragraphs beside a visual. If it won't fit, that's usually two ideas, or the
-visual is doing work the words should do (or vice versa).
+of short paragraphs beside a visual. If it won't fit, split it: sometimes into two ideas,
+more often into two pages that both serve the same idea.
 
 **The visual** is whatever the x-factor pass chose: an SVG, an `<img>`, a `<figure>` with a
 caption, a `<video>`, a canvas, or a playable. It lives in `.ex-stage`, scales to the box,

@@ -1,7 +1,9 @@
 # Tree Design
 
 An explorable built with this skill is a **tree of pages**, not a scrolling document.
-Each page fits one viewport and carries exactly one idea. Depth is expressed as
+Each page fits one viewport and carries at most one idea — the limit is on density, not on
+how much room an idea may have. Give a big idea as many pages as it takes: an aspect each, a
+comparison drawn out properly, the case seen from a second angle. Depth is expressed as
 navigation: the further you travel from the root, the deeper into the rabbit hole you
 are. Branches let the tree adapt to what the reader cares about — Case's wished-for
 non-linear explorable — but branching is also where readers get lost, so the shape rules
