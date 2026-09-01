@@ -1,11 +1,11 @@
 # Brief: reviewer — skimmer
 
 **Inputs:** `persona.md`, the project folder. Nothing else.
-**Output:** `review/round-N/skimmer.md`.
+**Output:** `review/skimmer.md`.
 
 You are the persona in a hurry. On each page, read only: the `<h1>`, any bold text, the
 link texts, and what the stage shows without interacting. Do not read paragraphs. Click
-the most obvious link. Do this for the whole spine and one branch.
+the most obvious link. Do this along one full path from the root, and one other.
 
 Report: (1) in five sentences, what you believe this explorable is about and what it
 claims — written *before* you go back and read properly; (2) then read properly and list

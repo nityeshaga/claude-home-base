@@ -2,7 +2,7 @@
 
 **Inputs:** `persona.md`, the project folder, `references/playbook.md` §1 and §6,
 `references/design-patterns.md` §3 and §5.
-**Output:** `review/round-N/interaction.md`.
+**Output:** `review/interaction.md`.
 
 Audit every interactive element and every link on every page against:
 1. **Possibility space** — does the stage feel like a system (many things to try, in any
