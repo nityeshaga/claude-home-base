@@ -31,10 +31,10 @@ Then build it cleanly:
 
 ## Phase 2: Visual Verification
 
-Once the build is complete, verify it visually using the **agent-browser** skill. This is not optional — it's the entire point. Code that compiles and "looks right in your head" is not verified.
+Once the build is complete, verify it visually in a real browser. This is not optional — it's the entire point. Code that compiles and "looks right in your head" is not verified.
 
 1. **Launch the implementation** in a browser (dev server, static file, whatever fits the stack)
-2. **Use agent-browser** to navigate to the page and take a screenshot
+2. **Drive a real browser** to navigate to the page and take a screenshot
 3. **Compare systematically** against the original design, checking:
    - Overall layout and spatial composition
    - Typography: font rendering, sizes, weights, line heights
@@ -74,7 +74,7 @@ This is the core of the process. It's not build-then-review. It's build-review-f
 Each iteration:
 
 1. **Fix** all discrepancies from the previous review
-2. **Screenshot** the updated implementation using agent-browser
+2. **Screenshot** the updated implementation in the browser
 3. **Spawn a fresh reviewer sub-agent** — fresh context every time, so it can't develop blind spots or become lenient after seeing improvements
 4. **Read the review** and fix again
 
