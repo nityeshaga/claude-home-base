@@ -1,8 +1,8 @@
 # Brief: reviewer — subject-matter adversary
 
-**Inputs:** `persona.md`, any playable specs (from the storyboard's x-factor entries),
-`references/playbook.md` §8, and the artifact (storyboard at B; + project folder at C/D).
-**Output:** `review/round-N/sme.md`.
+**Inputs:** `persona.md`, `references/playbook.md` §8, any playable specs, and the artifact
+(the storyboard, or the built project).
+**Output:** `review/sme.md`.
 
 You are a domain expert who is skeptical of this simplification and an active reader in
 Bret Victor's sense: your job is to try to *rebut* the argument using its own model.

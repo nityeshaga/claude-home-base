@@ -1,6 +1,6 @@
 # What Carries a Page: Visuals and Playables
 
-Used in the x-factor pass (SKILL.md step 4), after the storyboard is settled. For each card,
+Used once the storyboard is settled, when deciding what carries each page. For each page,
 pick the medium that makes that idea land. Case's rule of thumb from the 2014 workshop —
 text for abstract concepts, graphs for relationships, animation for change over time,
 interactives for processes and systems — is the whole menu in one line.
@@ -51,7 +51,7 @@ claim and says what it means. Case does this after every interaction in *Trust* 
 *Polygons* — "See what happened?" followed by the point in words.
 
 If two or more playables use the same system (same entities, same rules), they share one
-model (`shared/model.js`) and the reader's state carries between them.
+model and the reader's state carries between them.
 
 ## 3. Gates, for playables only
 
@@ -66,8 +66,8 @@ with pictures don't have gates; their ways forward are simply offered.
 | hard | solves a task using the idea | everything after depends on this being understood |
 | fork | chooses between two paths | the tree branches here |
 
-Hard gates get an escape hatch ("Show me how") after three failed tries — the runtime does
-this. Gates never demand dexterity or speed.
+Hard gates get an escape hatch ("Show me how") after a few failed tries. Gates never demand
+dexterity or speed.
 
 ## 4. Playable patterns
 

@@ -81,7 +81,8 @@ counter-intuitive idea every few minutes.
 Sometimes step back **down** from abstract to concrete (see §5).
 
 The arc repeats at every depth: each new level opens with a question the reader now has
-because of what they just understood.
+because of what they just understood. Case's pieces are short because each carries one idea;
+in a tree, this arc is the shape of a *path*, and a subject holds many.
 
 **Act 3 — End with 🤔.** A sandbox. "In the beginning I give the player *my* question;
 at the end I want them to explore *their own*." The ending should be something the reader
@@ -194,7 +195,7 @@ that worked:
 From the 2014 workshop: **playtest**. Earth Primer's readers skimmed, skipped things they
 didn't know, and got confused; adding content gates paradoxically made them learn *more*.
 The "90% crap rule": most of the work is discarding what didn't work. This skill cannot
-watch humans, so it simulates the specific failures they reveal (see review-protocol.md).
+watch humans, so it simulates the specific failures they reveal with independent reviewers.
 
 ## 7. Simulation: what it is for
 

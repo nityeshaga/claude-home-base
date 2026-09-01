@@ -17,162 +17,86 @@ navigation, not scrolling.
 A page is, by default, what a page in a good explanatory article is: a short piece of prose
 and one visual that earns its place — a diagram, a chart, an annotated screenshot, an
 image, a short video. Some pages will carry a **playable** — something the reader operates
-rather than looks at — but only where operating a system teaches what a picture can't.
-Case and Victor both warn against interaction for its own sake; in practice most pages
-don't need it, and a tree of impressive widgets with no teaching between them is worse than
-a plain article. The explanation comes first; everything else serves it.
+rather than looks at — where operating a system teaches what a picture can't. A tree of
+impressive widgets with no teaching between them is worse than a plain article. The
+explanation comes first; everything else serves it.
 
-Read `references/playbook.md` once before your first project. It is the *why* behind this
-skill — Case's arc, Victor's ladder, Strogatz's empathy — and you'll apply it with better
-judgment than any checklist here.
+Read `references/playbook.md` before your first project. It is the *why* — Case's arc,
+Victor's ladder, Strogatz's empathy — and you'll apply it with better judgment than any
+checklist. `references/design-patterns.md` is the menu of what can carry a page, and how to
+design a playable when a page gets one.
 
-## Roles
+## How it goes
 
-You, the orchestrator, are the **teacher and the author**. You own the persona, the central
-question, the storyboard, the prose, and the building of the pages — one author holding the
-whole argument is what makes the tree read as one piece. Subagents do the few things that
-genuinely benefit from a separate context:
+You are the teacher and the author. One person holding the whole subject is what makes the
+tree read as one piece, so the storyboard, the prose, and the pages are yours. Subagents
+are for the few things that benefit from a separate context: an advisor on visuals, a
+builder for each playable, and reviewers who must not have seen your intent.
 
-- **Design planner** — one, producing the visual identity you build against.
-- **Visual advisor** — one, after the x-factor pass: suggests stronger figures and playables
-  worth building. It advises; you decide.
-- **Playable builders** — one per playable (or shared-model cluster). A playable needs a
-  small system held in focus and iterated on, which is worth its own context.
-- **Reviewers** — independent, clean-slate, per `references/review-protocol.md`.
+**Persona.** Ask the user a few questions — who this is for, what they should be able to do
+or explain afterwards, how much ground to cover and how deep, tone, what they already know
+and don't. Write it down; get sign-off. The known/unknown terms are what let a reviewer
+check reading level against something concrete.
 
-Everything else — the storyboard, the prose, the ordinary visuals, the assembly — you do
-yourself. It's faster and the pages come out connected, which is the thing that matters most.
+**Question.** Come up with three candidates — a blatant question, a story, a game — each with
+a sketch of page 1. Pick the one this reader would actually want answered, whose first page
+needs nothing they don't already know. Show the user.
 
-Briefs are in `agents/`; `agents/README.md` has the spawning pattern. If subagents are
-unavailable, run the roles sequentially from their briefs and say so.
+**Storyboard.** This is the step that decides whether the explorable teaches. Think as a
+teacher, not a widget designer. Outline how you'd teach this subject to this reader — the way
+you'd outline a book: the areas the subject divides into, what each contains, how far each
+goes, down to the pages. What do they already believe that is wrong, and where does it get
+corrected? Where does the subject genuinely divide into things different readers care about?
+Where does each path end, and what should the reader be able to say or do at that point?
 
-## Workflow
+New questions open as you go deeper — a page often exists because its parent raised
+something it didn't answer, and a division is two questions the reader chooses between. Make
+the reader want each one before you answer it; every question you open is either answered
+somewhere in the tree or deliberately left as theirs.
 
-Project folder: `<name>-explorable/` (layout in `references/build-guide.md` §2). Keep
-`PLAN.md` at the root with these steps as a checklist.
+The tree's shape is the subject's, not a story's: a subject with six areas has a root with
+six children. A few things hold it together — every page has one parent; the root doesn't
+divide (the reader needs the hook and a first concrete idea before choosing a direction
+means anything); a page builds only on what its ancestors explained, never on a sibling
+subtree; and every leaf closes properly, so a reader who reaches the end of a path feels they
+arrived somewhere.
 
-### 1. Persona — with the user, briefly
+Have independent reviewers read the storyboard (below). An outline is cheap to change; fix
+the teaching here, not in HTML.
 
-`references/specs.md` §1. What it needs: who is this for, what should they be able to do
-or explain afterwards, how much ground should it cover and how deep may it go, tone, what
-they already know. Answer from what the user has already given; ask only what's missing.
-Draft `persona.md`, get sign-off. The known/unknown term lists are a reading-level guide that
-reviewers can check against; they are not a quota.
+**What carries each page.** Read `references/design-patterns.md`, then go page by page and
+choose the right medium for that page's idea. Where a page gets a playable, do the
+message→mechanics exercise there. Then spawn an advisor with the persona and the storyboard
+to suggest stronger figures, better media, playables worth building, and things to cut; it
+advises, you decide.
 
-### 2. Central question
+**Build.** Load the `frontend-design` skill and decide the visual identity for this subject
+before touching a page — every page of the tree shares it. Then build the pages yourself, in
+one pass: the prose in the persona's voice, with the connective tissue that makes the tree
+read as one argument, and the visual on each page. Give each playable its own subagent with
+the page's prose already written; it fills the visual and may flag a sentence that no longer
+matches, but it doesn't rewrite the explanation.
 
-Come up with three candidate questions yourself — a blatant one, a story, a game or puzzle
-— each with a one-paragraph sketch of page 1. Pick the one this reader would actually
-want answered, whose first page needs nothing they don't already know. Write `question.md`
-(specs §2) with the runners-up noted. Show the user; continue unless they object.
+Every page fits one viewport at laptop size with no vertical scroll, and reads on a phone —
+a figure that fits at 390px isn't the same as one that's legible there. The ways forward
+from a page are obvious and say where they lead; readers can always see where they are in
+the tree. Look at every page, at both sizes, before you call it done.
 
-### 3. Storyboard — teaching mode
+**Review.** Spawn the six reviewers in `agents/` as separate subagents. Each gets only the
+persona, its brief, and the built project — not your storyboard notes, your reasoning, or
+each other's findings. Fix what they find; run them again on what changed. Run the
+playtester, wayfinding and SME reviewers on the storyboard too, before building.
 
-This is the step that decides whether the explorable teaches. Read
-`references/tree-design.md`, then think as a teacher, not a widget designer: starting from
-the central question, what must the reader understand first? What do they already believe
-that is wrong, and where is the reversal that corrects it? What follows from what, and what
-overturns what — Case's THEREFORE/BUT is a good way to feel out the spine of the argument.
-Where does the reader's interest genuinely fork ("I care about X" vs "I care about Y"), and where is a deeper rabbit hole an
-optional side path? Where does it end, and what should the reader be able to say or do at
-that point?
+**Deliver.** The project folder, a short tour, the persona, and what you chose not to fix
+and why.
 
-New questions can open as you go deeper — a page often exists because its parent raised
-something it didn't answer, and a fork is two questions the reader chooses between. Make
-the reader want each one before you answer it. Every question you open is either answered
-somewhere in the tree or deliberately left as theirs to explore.
+## Lessons from real runs
 
-Write `storyboard.md` — one card per page (specs §3): the idea, what the page explains and
-how, the reversal if there is one, the sentence the reader could say afterwards, and what
-the page offers as the way(s) forward. Write `shared/map.js` to match. Run
-`python scripts/validate_tree.py <project> --no-files`.
-
-Don't decide visuals yet. A card may say "this idea wants a picture of…" but the storyboard
-is about the explanation.
-
-**Checkpoint B** (review-protocol.md §3): spawn the storyboard reviewers. Cards are cheap to
-change; fix the argument here, not in HTML.
-
-### 4. X-factor pass — what carries each page
-
-Read `references/design-patterns.md` — it matches kinds of ideas to kinds of media
-(diagram, chart, annotated screenshot, photo, video, animation, place-your-bets reveal,
-playable) and has the playable patterns and craft notes. Then go card by card and choose
-the right medium for that page's idea.
-
-When a page gets a playable, that's where the message→mechanics exercise applies, to that
-page or cluster, producing a short spec (design-patterns §2). Playables sharing one system
-share one model. Record each decision on the card (specs §4).
-
-Then spawn `agents/visual-advisor.md` on the storyboard. It suggests stronger figures,
-better media, playables worth building, and things to cut. It advises; you decide — adopt
-what improves the explanation and drop the rest, then update the cards.
-
-### 5. Build
-
-1. Copy `assets/template/*` into the project. `shared/explorable.js` and
-   `shared/explorable.css` are the runtime (tree navigation, minimap, state, forward
-   links) — don't edit them; identity goes in `shared/theme.css` / `shared/theme.js`.
-2. Spawn `agents/design-planner.md` → `design-plan.md`, `theme.css`, `theme.js`. Its brief
-   starts by loading the `frontend-design` skill; check the plan says which guidance it was
-   written against before you build from it.
-3. **Build the pages yourself**, in one pass, from the storyboard: the prose in the
-   persona's voice with the connective tissue that makes the tree read as one argument, and
-   the visual on each page. You designed the tree and you're holding the whole argument —
-   that's what keeps the pages connected, and it's faster than briefing builders.
-4. Spawn `agents/playable-builder.md` for each playable (or each shared-model cluster).
-   It gets the card, the spec, the design plan, the page file with the prose already in it,
-   and the build guide. It fills the stage; it doesn't rewrite the prose, though it may flag
-   a sentence that no longer matches.
-5. Run `scripts/validate_tree.py` and `scripts/check_pages.py`. Look at every screenshot,
-   desktop and mobile.
-6. **Checkpoints C and D** per `references/review-protocol.md`, with fixers per page.
-
-### 6. Deliver
-
-The project folder (opens from `index.html`, or `python -m http.server`), a one-paragraph
-tour with the minimap screenshot, the persona, and `review/CHANGELOG.md`. Every page URL
-carries reader state, so mid-tree links are shareable.
-
-## Principles to keep in view
-
-- **The explanation must stand on its own.** If the visuals were removed, the pages should
-  still read as a clear, connected account of the topic. Visuals deepen; prose explains.
-- **Love the question first, end with the reader's own.** Hook needs no prior knowledge;
-  each page picks up where its parent left off; every path ends with a proper close.
-- **At most one idea per viewport.** A page never holds two; an idea often takes several.
-  If it doesn't fit, either it's two ideas, or it's one that wants unfolding across pages,
-  or it's the wrong medium.
-- **Interaction where it earns its place.** A playable when operating the thing is the
-  lesson; otherwise the visual that shows it best.
-- **Depth is navigation.** The ways forward from a page are obvious and say where they
-  lead; side paths are labeled; the reader can always see where they are.
-- **Honest about the model.** Where a simplification or a playable's rules diverge from the
-  real thing, the page says so plainly.
-- **Write for the persona.** Vocabulary is part of what they're learning; name things,
-  define them in the reader's terms, connect them to what they already know.
-
-## Reference map
-
-| Need | Read |
-|---|---|
-| Why (Case, Victor, Strogatz distilled) | `references/playbook.md` |
-| Designing the tree: spine, forks, side paths, wayfinding, links | `references/tree-design.md` |
-| Choosing a visual or playable for a page; playable patterns | `references/design-patterns.md` |
-| Templates: persona, question, storyboard card, x-factor spec, design plan | `references/specs.md` |
-| File layout, runtime API, page contract | `references/build-guide.md` |
-| Reviewer roles, rounds, findings, triage, exit | `references/review-protocol.md` |
-| Subagent briefs | `agents/*.md` |
-| Starting files (runtime, CSS, templates) | `assets/template/` |
-| Structure + reading-level check | `scripts/validate_tree.py <project>` |
-| Viewport / error / screenshot checks (Playwright, install once) | `scripts/check_pages.py <project>` |
-
-## Lessons from the first real run
-
-Recorded as observations, not rules. The skill once made the simulation the center of the
-process: a "ruleset" step designed a model before any explanation existed, every page was
-required to render it, and builders were told not to explain the twist in words. The result
-was nine handsome playables and a reader who finished four pages without being told what
-they had learned or how the topic actually worked. The fixes are structural and already
-above: the explanation is written first, by one author; visuals and playables are chosen
-per page afterwards; and nothing in this skill treats text as the enemy.
+Recorded as observations, not rules. Every time this skill has failed, the cause was an
+instruction that was followed too well. A mandatory "design the simulation" step produced
+nine playables and no teaching. "One idea per page" was read as one page per idea, and a
+subject that deserved forty pages got seventeen. "Spine and side paths" produced a line with
+two-page detours instead of a tree. A shared runtime made every explorable navigate the same
+way. What's left here is the smallest set of things that seemed to hold: the playbook, the
+menu of media, the reviewers, and the shape of the process. Where this document is vague,
+that's on purpose — the material decides.
