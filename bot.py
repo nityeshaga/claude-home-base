@@ -149,6 +149,36 @@ except Exception as _nf_err:  # pragma: no cover — degraded path
     def is_content_free_holding(_text_block: str) -> bool:
         return False
 
+# Credential redaction on the way OUT to Slack — see secret_filter.py for the
+# 2026-08-31 08:23:57 incident and the both-directions suite. Note the
+# deliberate asymmetry with the holding filter above: that one degrades to
+# no-filtering because a missing nicety beats a dark bot. This one must NOT,
+# because it enforces a Ring 0 invariant, so the fallback below is a live
+# minimal gate rather than a no-op. A gate that can be silently switched off by
+# an ImportError is not a gate.
+try:
+    from secret_filter import redact as _redact_secrets  # noqa: E402
+except Exception as _sf_err:  # pragma: no cover — degraded path, still gating
+    logger.error(
+        f"secret_filter unavailable, FALLING BACK to minimal inline gate: {_sf_err}"
+    )
+    _FALLBACK_SECRETS = [
+        ("google_oauth_client_secret", re.compile(r"GOCSPX-[A-Za-z0-9_\-]{20,}")),
+        ("anthropic_api_key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{40,}")),
+        ("slack_token", re.compile(r"\bxox[baprse]-[A-Za-z0-9\-]{15,}")),
+        ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}")),
+        ("aws_access_key_id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+        ("private_key_block", re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")),
+    ]
+
+    def _redact_secrets(text: str) -> tuple[str, list[str]]:
+        found, out = [], text or ""
+        for label, pat in _FALLBACK_SECRETS:
+            out, n = pat.subn(f"[REDACTED:{label}]", out)
+            if n:
+                found.append(label)
+        return out, sorted(set(found))
+
 # The Slack user ID of this bot — set via BOT_USER_ID env var.
 # Used to identify the bot's own messages in thread history and to prevent
 # duplicate handling of @mentions. Find it in your Slack app settings or
@@ -851,6 +881,21 @@ def post_response(channel: str, message: str, thread_ts: str | None = None) -> s
     # Enforced on the raw text too: the native `markdown` block path below posts
     # `chunk` verbatim and never passes through md_to_slack.
     message = strip_link_emphasis(message)
+    # Last gate before the wire. post_response is the ONE funnel — on_text,
+    # send_dm and send_to_channel all pass through here — so redacting at this
+    # line covers streamed turns, proactive DMs and the --channel CLI alike.
+    # This is deliberately not a decision point: there is no message to Slack
+    # that needs a live secret in it, so there is no judgment to exercise and
+    # nothing to talk myself out of at 08:23 in the morning.
+    message, _leaked = _redact_secrets(message)
+    if _leaked:
+        logger.error(
+            f"SECRET REDACTED before posting to {channel}: {', '.join(_leaked)} "
+            f"— Ring 0 credential-exposure gate fired"
+        )
+        audit_logger.error(
+            f"SECRET_REDACTED | CHANNEL:{channel} | LABELS:{','.join(_leaked)}"
+        )
     for chunk in chunk_message(message):
         fallback = md_to_slack(chunk)
         result = None
