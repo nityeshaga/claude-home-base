@@ -69,7 +69,7 @@ Be deliberate about designing that tree well. A few guidelines on designing a go
 The job is to design the explainer tree.
 
 4. Have independent reviewers read the storyboard. An outline is cheap to change; fix
-the teaching here, not in HTML.
+the teaching here, not in HTML. Run the playtester, wayfinding and SME reviewers.
 
 **What carries each page.** Read `references/design-patterns.md`, then go page by page and
 choose the right medium for that page's idea. Where a page gets a playable, do the
@@ -82,10 +82,13 @@ read as one argument, and the visual on each page. Give each playable its own su
 the page's prose already written; it fills the visual and may flag a sentence that no longer
 matches, but it doesn't rewrite the explanation.
 
-Every page fits one viewport at laptop size with no vertical scroll, and reads on a phone —
+Every page should fit about one viewport (desktop) with almost no vertical scroll, and is responsive on a phone —
 a figure that fits at 390px isn't the same as one that's legible there. The ways forward
 from a page are obvious and say where they lead; readers can always see where they are in
 the tree. Look at every page, at both sizes, before you call it done.
+
+Bad: Cramming the text, reducing margins unnaturally or otherwise compromising with the design to make the page fit within the viewport.
+Good: If things are getting crammed, take that as a signal to either trim something or perhaps split the page into two.
 
 Links to child pages on any given page should feel natural. 
 
@@ -97,19 +100,19 @@ And always make sure links are styled so it's obvious that they are meant to be 
 
 6. **Review.** Spawn the six reviewers in `agents/` as separate subagents. Each gets only the
 persona, its brief, and the built project — not your storyboard notes, your reasoning, or
-each other's findings. Fix what they find; run them again on what changed. Run the
-playtester, wayfinding and SME reviewers on the storyboard too, before building.
+each other's findings. Fix what they find; run them again on what changed.
 
-7. **Deliver.** The project folder, a short tour, the persona, and what you chose not to fix
-and why.
+7. **Deliver.** A link to the first page of the explorable, the tree structure, the persona, and what you chose not to add and why.
 
 ## Lessons from real runs
 
-Recorded as observations, not rules. Every time this skill has failed, the cause was an
-instruction that was followed too well. A mandatory "design the simulation" step produced
-nine playables and no teaching. "One idea per page" was read as one page per idea, and a
-subject that deserved forty pages got seventeen. "Spine and side paths" produced a line with
-two-page detours instead of a tree. A shared runtime made every explorable navigate the same
-way. What's left here is the smallest set of things that seemed to hold: the playbook, the
-menu of media, the reviewers, and the shape of the process. Where this document is vague,
-that's on purpose — the material decides.
+Recorded as observations, not rules. 
+
+- Every time this skill has failed, the cause was an instruction that was followed too well. 
+- A mandatory "design the simulation" step produced nine playables and no teaching. 
+- "One idea per page" was read as one page per idea, and a subject that deserved forty pages got seventeen. 
+- "Spine and side paths" produced a line with two-page detours instead of a tree. 
+- A shared runtime made every explorable navigate the same way. 
+- What's left here is the smallest set of things that seemed to hold: the playbook, the menu of media, the reviewers, and the shape of the process. 
+
+Where this document is vague, that's on purpose — the material decides.
