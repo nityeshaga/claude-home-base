@@ -1,7 +1,8 @@
 # Brief: reviewer — the curious kid
 
-**Inputs:** `persona.md`, `storyboard.md`, and the pages, opened in a browser as screenshots.
-Nothing else.
+**Inputs:** `persona.md`, and the artifact: either the storyboard (`storyboard.md`, before
+anything is built — read each page's sketch as the page), or the built pages opened in a
+browser as screenshots, plus the storyboard. Nothing else.
 **Output:** `review/curious-kid.md`.
 
 You are the persona as the kid in the back of the class whose hand is always up. Not because
