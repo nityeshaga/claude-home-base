@@ -31,7 +31,7 @@ design a playable when a page gets one.
 You are the teacher and the author. One person holding the whole subject is what makes the
 tree read as one piece, so the storyboard, the prose, and the pages are yours. Subagents
 are for the few things that benefit from a separate context: an advisor on visuals, a
-builder for each playable, and reviewers who must not have seen your intent.
+designer, a builder for each playable, and reviewers who must not have seen your intent.
 
 1. **Persona.** Ask the user a few questions — who this is for, what they should be able to do
 or explain afterwards, how much ground to cover and how deep, tone, what they already know
@@ -66,8 +66,10 @@ Make a world class tree. A few guidelines on designing a good tree:
 
 Have the utmost empathy for the reader and you'll do a good job.
 
-4. Have independent reviewers read the storyboard. An outline is cheap to change; fix
-the teaching here, not in HTML. Run the playtester, wayfinding and SME reviewers.
+4. **Storyboard review.** An outline is cheap to change; fix the teaching here, not in HTML.
+Spawn the four reviewers in `agents/` (Chad, the curious kid, the restless reader, the SME)
+on the storyboard, each with only the persona, its brief, and the storyboard. Read the
+"Review" step below for how to take what they say.
 
 **What carries each page.** Read `references/design-patterns.md`, then go page by page and
 choose the right medium for that page's idea. Where a page gets a playable, do the
@@ -75,7 +77,13 @@ message→mechanics exercise there. Then spawn an independent advisor agent with
 to suggest stronger figures, better media, playables worth building, and things to cut; it
 advises, you decide.
 
-5. **Design.** Spawn an independent subagent with the `frontend-design` skill and ask it to come up with a completely unique interesting visual aesthetic for this subject based on the persona and storyboard. It needs to define the creative direction (color scheme, layout, typography, etc.).
+5. **Design.** Write the prose for two pages first — the longest in the storyboard and a
+typical one — then spawn a designer subagent with `agents/designer.md`, the `frontend-design`
+skill, the persona, the storyboard and those two pages. It comes up with a completely unique
+visual aesthetic for this subject and this reader, and owns the creative direction. Read the
+brief before you write the prompt: it lists what you must not tell the designer. Given a
+viewport size or a no-scroll test, a designer makes the content fit the box by shrinking it,
+and every page you build afterwards inherits the cramming.
 
 6. **Build** Then build the pages yourself, in one pass: the prose in the persona's voice, with the connective tissue that makes the tree
 read as one argument, and the visual on each page. Give each playable its own subagent with
@@ -90,6 +98,10 @@ the tree. Look at every page, at both sizes, before you call it done.
 Bad: Cramming the text, reducing margins unnaturally or otherwise compromising with the design to make the page fit within the viewport.
 Good: If things are getting crammed, take that as a signal to either trim something or perhaps split the page into two.
 
+The fit test is yours, and it has two answers: trim or split. Never hand a builder a scroll-height
+check to pass, or tell it a page is "tight" — it will shrink the diagram and cap the code block, and
+the page will fit and be unreadable.
+
 Links to child pages on any given page should feel natural. 
 
 Bad: Make a row at the bottom with buttons that ask users to click on it to go to "this room" or "open that door".
@@ -98,9 +110,17 @@ Great: Links don't stand out shouting at the reader "click me" but rather silent
 
 And always make sure links are styled so it's obvious that they are meant to be clicked.
 
-7. **Review.** Spawn the seven reviewers in `agents/` as separate subagents. Each gets only the
-persona, its brief, and the built project — not your storyboard notes, your reasoning, or
-each other's findings. Fix what they find; run them again on what changed.
+7. **Review.** Spawn the four reviewers again, on the built pages: Chad (the bullshit detector
+in the persona's shoes), the curious kid (the questions you raised and never answered), the
+restless reader (too heavy, too slow, off the promise) and the SME (what's false). Each gets
+only the persona, its brief, the storyboard and the pages as screenshots — not your reasoning
+or each other's findings. Then the design critic, with screenshots and the aesthetic.
+
+They are critical and demanding on purpose, and they write feedback, not reports: per page,
+worst first, no praise. Treat it as feedback. You are free to accept or reject any line, but
+answer every one — fixed, or kept with a one-line reason — and keep that ledger in `review/`.
+They are doing you a service; the reader they're standing in for won't leave a comment. Fix,
+then run them again on what changed.
 
 8. **Deliver.** A link to the first page of the explorable, the tree structure, the persona, and what you chose not to add and why.
 
