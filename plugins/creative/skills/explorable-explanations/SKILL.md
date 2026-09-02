@@ -87,7 +87,13 @@ a figure that fits at 390px isn't the same as one that's legible there. The ways
 from a page are obvious and say where they lead; readers can always see where they are in
 the tree. Look at every page, at both sizes, before you call it done.
 
-Links to child pages on any given page should feel natural. instead of showing buttons and literally asking user to click on the one that they want to go deeper on, place the links in a part of a diagram that the user may naturally want to click into. Or on a piece of text they want to click into. Buttons are not banned but they I encourage you to find more interesting places. And always make sure it is styled so it's recognisably a way in.
+Links to child pages on any given page should feel natural. 
+
+Bad: Make a row at the bottom with buttons that ask users to click on it to go to "this room" or "open that door".
+Good: Weaving links as a natural part of a diagram that the user may naturally want to click into or a piece of prose. 
+Great: Links don't stand out shouting at the reader "click me" but rather silently exist as if predicting what the reader will be curious about next.
+
+And always make sure links are styled so it's obvious that they are meant to be clicked.
 
 6. **Review.** Spawn the six reviewers in `agents/` as separate subagents. Each gets only the
 persona, its brief, and the built project — not your storyboard notes, your reasoning, or
