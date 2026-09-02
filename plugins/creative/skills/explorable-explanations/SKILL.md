@@ -79,13 +79,13 @@ advises, you decide.
 
 5. **Design.** Spawn an independent subagent with the `frontend-design` skill and ask it to come up with a completely unique interesting visual aesthetic for this subject based on the persona and storyboard. It needs to define the creative direction (color scheme, layout, typography, etc.).
 
-Don't restrict it. Don't give it a viewport size, a "must fit with no scroll" test, a column
-ratio or a page height — given a box, a designer makes the content fit the box, with
-`overflow: hidden`, a media query that drops line-height, 11px labels, and every page you
-build afterwards inherits the cramming. Do tell it: no funky hacks, keep the page professional
-and readable at a size this persona reads without leaning in. If a page's content can't fit a
-single viewport at that size, it should say so and ask you to trim the text or split the page,
-not make it fit.
+Its job is the creative design lead's: a unique, fabulous design system for the whole
+explorable, and the bones every page is built on. That's it — there are no pages yet. So don't
+give it a viewport size, a "must fit with no scroll" test, a column ratio or a page height.
+Given a box, a designer builds the box into the CSS (`overflow: hidden`, a media query that
+drops line-height, 11px labels) and every page you build afterwards inherits the cramming.
+No funky hacks; professional, and readable at a size this persona reads without leaning in.
+Whether a page fits is decided in Build, by you, by trimming or splitting.
 
 6. **Build** Then build the pages yourself, in one pass: the prose in the persona's voice, with the connective tissue that makes the tree
 read as one argument, and the visual on each page. Give each playable its own subagent with
