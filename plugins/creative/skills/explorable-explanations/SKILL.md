@@ -71,13 +71,13 @@ Spawn the four reviewers in `agents/` (Chad, the curious kid, the restless reade
 on the storyboard, each with only the persona, its brief, and the storyboard. Read the
 "Review" step below for how to take what they say.
 
-Then rewrite the storyboard from first principles. Don't patch it — a finding applied as a
-clause makes the page heavier, and forty of them make the spine heavier everywhere. Go back to
-step 3 as a teacher with everything you now know: where the restless reader closed the tab,
-what the kid asked that nobody answered, what Chad couldn't say back, what the SME says is
-false. Feel free to throw away pages, merge them, split them, re-cut the tree, change the
-question. The storyboard you had is a draft, not a sunk cost. Then run the four on the new
-storyboard; it's ready when the restless reader reaches the end.
+Then revise the storyboard by incorporating the feedback. Go back to step 3 as a teacher with
+everything you now know: where the restless reader closed the tab, what the kid asked that
+nobody answered, what Chad couldn't say back, what the SME says is false. Think from a
+high-level about what the all the feedback mean at a high level and understand the feedback
+behind the feedback. Feel free to start the storyboard from scratch, throw away pages, rewrite
+them, split them, re-design the tree, change the question, add new pages. The storyboard you
+had is a draft, not a sunk cost.
 
 **What carries each page.** Read `references/design-patterns.md`, then go page by page and
 choose the right medium for that page's idea. Where a page gets a playable, do the
