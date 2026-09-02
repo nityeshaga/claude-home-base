@@ -41,15 +41,13 @@ check reading level against something concrete.
 2. **Question.** Start with 🤔. Make the reader love the question before you answer it (Strogatz). 
 Traditional teaching fails because "it answers questions the student hasn't thought to ask."
 Come up with three candidates — a blatant question, a story, a game — each with
-a sketch of page 1. Pick the one this reader would actually want answered, whose first page
-needs nothing they don't already know. Show the user.
+a sketch of page 1. Pick the one this reader would definitely want answered, whose first page
+needs nothing they don't already know. 
 
-3. **Storyboard.** This is the step that decides whether the explorable teaches. Think as a
-teacher, not a widget designer. Outline how you'd teach this subject to this reader — the way
-you'd outline a book: the areas the subject divides into, what each contains, how far each
-goes, down to the pages. What do they already believe that is wrong, and where does it get
+3. **Storyboard.** This is the step that decides whether the explorable teaches. Think like a
+world class teacher, not a widget designer. Outline how you'd teach this subject to this reader: the areas the subject divides into, what each contains, how far each goes, down to the pages. What do they already believe that is wrong, and where does it get
 corrected? Where does the subject genuinely divide into things different readers care about?
-Where does each path end, and what should the reader be able to say or do at that point?
+Where does each path end, and what should the reader be able to say or do at that point? Which ideas are heavy? Where might this reader get lost? Where might they get bored?
 
 New questions open as you go deeper — a page often exists because its parent raised
 something it didn't answer, and a division is two questions the reader chooses between. Make
@@ -58,7 +56,7 @@ somewhere in the tree or deliberately left as theirs.
 
 Did you notice you are designing a tree here? Every page has one parent and 0 or more child pages that it links to.
 
-Be deliberate about designing that tree well. A few guidelines on designing a good tree:
+Make a world class tree. A few guidelines on designing a good tree:
 
 - tree shape should match the topic at hand - is it a bushy tree with lots of branches and sub-branches or is it a straight tree with a main spine and short branches? is it a big tree or a small tree? you don't want an unnaturally shaped tree - too heavy on one side or one where branches start right from the root node.
 - a page builds only on what its ancestors explained, never on a sibling branch
@@ -66,7 +64,7 @@ Be deliberate about designing that tree well. A few guidelines on designing a go
 - try not to have more than 3 branches at any given node 
 - every branch should feel natural
 
-The job is to design the explainer tree.
+Have the utmost empathy for the reader and you'll do a good job.
 
 4. Have independent reviewers read the storyboard. An outline is cheap to change; fix
 the teaching here, not in HTML. Run the playtester, wayfinding and SME reviewers.
@@ -77,7 +75,9 @@ message→mechanics exercise there. Then spawn an independent advisor agent with
 to suggest stronger figures, better media, playables worth building, and things to cut; it
 advises, you decide.
 
-5. **Build.** Spawn an independent subagent with the `frontend-design` skill and let it come up with an interesting visual identity for this subject before touching a page — every page of the tree shares this visual language. Then build the pages yourself, in one pass: the prose in the persona's voice, with the connective tissue that makes the tree
+5. **Design.** Spawn an independent subagent with the `frontend-design` skill and ask it to come up with a completely unique interesting visual aesthetic for this subject based on the persona and storyboard. It needs to define the creative direction (color scheme, layout, typography, etc.).
+
+6. **Build** Then build the pages yourself, in one pass: the prose in the persona's voice, with the connective tissue that makes the tree
 read as one argument, and the visual on each page. Give each playable its own subagent with
 the page's prose already written; it fills the visual and may flag a sentence that no longer
 matches, but it doesn't rewrite the explanation.
@@ -98,11 +98,11 @@ Great: Links don't stand out shouting at the reader "click me" but rather silent
 
 And always make sure links are styled so it's obvious that they are meant to be clicked.
 
-6. **Review.** Spawn the six reviewers in `agents/` as separate subagents. Each gets only the
+7. **Review.** Spawn the seven reviewers in `agents/` as separate subagents. Each gets only the
 persona, its brief, and the built project — not your storyboard notes, your reasoning, or
 each other's findings. Fix what they find; run them again on what changed.
 
-7. **Deliver.** A link to the first page of the explorable, the tree structure, the persona, and what you chose not to add and why.
+8. **Deliver.** A link to the first page of the explorable, the tree structure, the persona, and what you chose not to add and why.
 
 ## Lessons from real runs
 
