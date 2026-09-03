@@ -44,15 +44,14 @@ Come up with three candidates — a blatant question, a story, a game — each w
 a sketch of page 1. Pick the one this reader would definitely want answered, whose first page
 needs nothing they don't already know. 
 
-3. **Storyboard.** This is the step that decides whether the explorable teaches. Think like a
-world class teacher, not a widget designer. Outline how you'd teach this subject to this reader: the areas the subject divides into, what each contains, how far each goes, down to the pages. What do they already believe that is wrong, and where does it get
-corrected? Where does the subject genuinely divide into things different readers care about?
-Where does each path end, and what should the reader be able to say or do at that point? Which ideas are heavy? Where might this reader get lost? Where might they get bored?
+3. **Storyboard.** This is the step that decides what the explorable teaches. Think like a
+world class teacher, not a widget designer. Outline how you'd teach this subject to this reader: the areas the subject divides into, what each contains, how far each goes, down to the pages. 
 
-New questions open as you go deeper — a page often exists because its parent raised
-something it didn't answer, and a division is two questions the reader chooses between. Make
-the reader want each one before you answer it; every question you open is either answered
-somewhere in the tree or deliberately left as theirs.
+The storyboard is not for a book but for an experience. The reader is going to walk through it and your job is to predict what they are feeling curious about, tickle their curiosity, create a curiosity gap, let them have fun, make it playful, introduce visuals that make their eyes go wide. Make it unforgettable experience.
+
+- What do they already believe that is wrong, and where does it get corrected? Where does the subject genuinely divide into things different readers care about?
+- Where does one path fork into 2 or 3 paths? Where does each path end, and what should the reader be able to say or do at that point? 
+- Which ideas are heavy and require a longer path? Where might this reader get lost? Where might they get bored?
 
 Did you notice you are designing a tree here? Every page has one parent and 0 or more child pages that it links to.
 
@@ -79,28 +78,23 @@ behind the feedback. Feel free to start the storyboard from scratch, throw away 
 them, split them, re-design the tree, change the question, add new pages. The storyboard you
 had is a draft, not a sunk cost.
 
-**What carries each page.** Read `references/design-patterns.md`, then go page by page and
+5. **What carries each page.** Read `references/design-patterns.md`, then go page by page and
 choose the right medium for that page's idea. Where a page gets a playable, do the
 message→mechanics exercise there. Then spawn an independent advisor agent with the persona and the storyboard
 to suggest stronger figures, better media, playables worth building, and things to cut; it
 advises, you decide.
 
-5. **Design.** Spawn an independent subagent with the `frontend-design` skill and ask it to come up with a completely unique interesting visual aesthetic for this subject based on the persona and storyboard. It needs to define the creative direction (color scheme, layout, typography, etc.).
+6. **Design.** Spawn an independent subagent with the `frontend-design` skill and ask it to come up with a completely unique interesting visual aesthetic for this subject based on the persona and storyboard. It needs to define the creative direction (color scheme, layout, typography, etc.).
 
 Its job is the creative design lead's: a unique, fabulous design system for the whole
-explorable, and the bones every page is built on. That's it — there are no pages yet. So don't
-give it a viewport size, a "must fit with no scroll" test, a column ratio or a page height.
-Given a box, a designer builds the box into the CSS (`overflow: hidden`, a media query that
-drops line-height, 11px labels) and every page you build afterwards inherits the cramming.
-No funky hacks; professional, and readable at a size this persona reads without leaning in.
-Whether a page fits is decided in Build, by you, by trimming or splitting.
+explorable, and the bones every page is built on. Tell it about the idea of an explorable and our playbook. 
 
-6. **Build** Then build the pages yourself, in one pass: the prose in the persona's voice, with the connective tissue that makes the tree
+7. **Build** Then build the pages yourself, in one pass: the prose in the persona's voice, with the connective tissue that makes the tree
 read as one argument, and the visual on each page. Give each playable its own subagent with
 the page's prose already written; it fills the visual and may flag a sentence that no longer
 matches, but it doesn't rewrite the explanation.
 
-Every page should fit about one viewport (desktop) with almost no vertical scroll, and is responsive on a phone —
+Rule #1: Every page should fit about one viewport (desktop) with almost no vertical scroll, and is responsive on a phone —
 a figure that fits at 390px isn't the same as one that's legible there. The ways forward
 from a page are obvious and say where they lead; readers can always see where they are in
 the tree. Look at every page, at both sizes, before you call it done.
@@ -108,11 +102,9 @@ the tree. Look at every page, at both sizes, before you call it done.
 Bad: Cramming the text, reducing margins unnaturally or otherwise compromising with the design to make the page fit within the viewport.
 Good: If things are getting crammed, take that as a signal to either trim something or perhaps split the page into two.
 
-The fit test is yours, and it has two answers: trim or split. Never hand a builder a scroll-height
-check to pass, or tell it a page is "tight" — it will shrink the diagram and cap the code block, and
-the page will fit and be unreadable.
+The fit test is yours, and it has two answers: trim or split. 
 
-Links to child pages on any given page should feel natural. 
+Rule #2: Links to child pages on any given page should feel natural. 
 
 Bad: Make a row at the bottom with buttons that ask users to click on it to go to "this room" or "open that door".
 Good: Weaving links as a natural part of a diagram that the user may naturally want to click into or a piece of prose. 
@@ -120,19 +112,18 @@ Great: Links don't stand out shouting at the reader "click me" but rather silent
 
 And always make sure links are styled so it's obvious that they are meant to be clicked.
 
-7. **Review.** Spawn the four reviewers again, on the built pages: Chad (the bullshit detector
+8. **Review.** Spawn the four reviewers again, on the built pages: Chad (the bullshit detector
 in the persona's shoes), the curious kid (the questions you raised and never answered), the
 restless reader (too heavy, too slow, off the promise) and the SME (what's false). Each gets
 only the persona, its brief, the storyboard and the pages as screenshots — not your reasoning
 or each other's findings. Then the design critic, with screenshots and the aesthetic.
 
-They are critical and demanding on purpose, and they write feedback, not reports: per page,
-worst first, no praise. Treat it as feedback. You are free to accept or reject any line, but
-answer every one — fixed, or kept with a one-line reason — and keep that ledger in `review/`.
-They are doing you a service; the reader they're standing in for won't leave a comment. Fix,
-then run them again on what changed.
+Treat all review agents as assets not adversaries. They help you sharpen the explorable before it
+touches the real world. You are free to accept or reject any line, but
+answer every one — fixed, or rejected with a one-line reason — and keep that ledger in `review/`.
+They are doing you a service; the reader they're standing in for won't leave a comment. 
 
-8. **Deliver.** A link to the first page of the explorable, the tree structure, the persona, and what you chose not to add and why.
+9. **Deliver.** A link to the first page of the explorable, the tree structure, the persona, and what you chose not to add and why.
 
 ## Lessons from real runs
 
