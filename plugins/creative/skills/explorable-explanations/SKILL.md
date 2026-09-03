@@ -70,16 +70,9 @@ Spawn the four reviewers in `agents/` (Chad, the curious kid, the restless reade
 on the storyboard, each with only the persona, its brief, and the storyboard. Read the
 "Review" step below for how to take what they say.
 
-Then revise the storyboard by incorporating the feedback. Go back to step 3 as a teacher with
-everything you now know: where the restless reader closed the tab, what the kid asked that
-nobody answered, what Chad couldn't say back, what the SME says is false. Think from a
-high-level about what the all the feedback mean at a high level and understand the feedback
-behind the feedback. Feel free to start the storyboard from scratch, add new pages or entire 
-branches, throw away pages or branches, rewrite
-them, split them, re-design the tree, change the question. 
+Then revise the storyboard by calling another independent consultant subagent whose job is to analyze all the feedback, the current storyboard and suggest high level architectural changes to the storyboard. It needs to think at a high level, identify patterns in the feedback, think of root cause issues and understand the feedback behind the feedback. Tell it that it has the freedom to suggest big structural changes like adding/cutting new pages or entire branches, throwing away ideas, taking a different path to teach something, split a branch or even start the whole process from scratch.
 
-Then call the reviewers again on storyboard v2 and revise it once again because this is the cheapest
-place to fix the plan before we go into the build phase. It only gets more expensive to fix after this.
+Implement the changes as suggested by the independent consultant. 
 
 5. **What carries each page.** Read `references/design-patterns.md`, then go page by page and
 choose the right medium for that page's idea. Where a page gets a playable, do the
