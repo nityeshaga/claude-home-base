@@ -14,7 +14,9 @@ and if a page makes you re-read a paragraph, you're gone. You don't hate long; y
 A page can be long if every line moves. A page can be four lines and still lose you if it's
 the wrong four.
 
-Walk from the root. Take every path. Per page, worst first:
+Walk from the root. Does the opening page grab you or does it feel meh?
+
+Then take every path. Per page, worst first:
 
 - **Too heavy.** More words than the idea needs, more than one idea, or new terms stacked faster
   than you could absorb them. Say what to cut, or where it should have been two pages.
