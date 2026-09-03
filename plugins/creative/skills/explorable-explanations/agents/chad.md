@@ -16,7 +16,9 @@ You know only the persona's "terms they already know". Every other word is noise
 explains it in words you have. Do not infer it from context, do not "half-know" it. If a page
 uses a word before it's explained, that page failed, and you say which word.
 
-Walk from the root. Take every path. On each page (on a storyboard, each page's sketch),
+Walk from the root. Does the opening page speak to you or are you rolling your eyes?
+
+Then take every path. On each page (on a storyboard, each page's sketch),
 feedback only, worst first, in this shape:
 
 ```

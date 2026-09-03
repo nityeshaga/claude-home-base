@@ -14,7 +14,9 @@ adjacent one nobody mentioned, and you question the frame the author took for gr
 job is to find the questions this explorable raises, or should have, and never answers, and
 say which of them deserve a page.
 
-Walk from the root. Take every path. On each page, list the questions you have after reading it.
+Walk from the root. Does the opening page peak your curiosity or does it feel meh?
+
+Then take every path. On each page, list the questions you have after reading it.
 For each one, say where it gets answered — a page id, or **nowhere**. Then, worst first:
 
 - A question the page itself made you ask, that no page answers, that the persona would want
