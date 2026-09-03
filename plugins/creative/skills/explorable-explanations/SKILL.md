@@ -74,9 +74,12 @@ Then revise the storyboard by incorporating the feedback. Go back to step 3 as a
 everything you now know: where the restless reader closed the tab, what the kid asked that
 nobody answered, what Chad couldn't say back, what the SME says is false. Think from a
 high-level about what the all the feedback mean at a high level and understand the feedback
-behind the feedback. Feel free to start the storyboard from scratch, throw away pages, rewrite
-them, split them, re-design the tree, change the question, add new pages. The storyboard you
-had is a draft, not a sunk cost.
+behind the feedback. Feel free to start the storyboard from scratch, add new pages or entire 
+branches, throw away pages or branches, rewrite
+them, split them, re-design the tree, change the question. 
+
+Then call the reviewers again on storyboard v2 and revise it once again because this is the cheapest
+place to fix the plan before we go into the build phase. It only gets more expensive to fix after this.
 
 5. **What carries each page.** Read `references/design-patterns.md`, then go page by page and
 choose the right medium for that page's idea. Where a page gets a playable, do the
