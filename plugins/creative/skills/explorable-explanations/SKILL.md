@@ -34,8 +34,8 @@ are for the few things that benefit from a separate context: an advisor on visua
 designer, a builder for each playable, and reviewers who must not have seen your intent.
 
 1. **Persona.** Ask the user a few questions — who this is for, what they should be able to do
-or explain afterwards, how much ground to cover and how deep, tone, what they already know
-and don't. Write it down; get sign-off. The known/unknown terms are what let a reviewer
+or explain afterwards, how much ground to cover and how deep, tone, make a short list of words they already know
+and words they don't. Write it down; get sign-off. The known/unknown terms are what let a reviewer
 check reading level against something concrete.
 
 2. **Question.** Start with 🤔. Make the reader love the question before you answer it (Strogatz). 
@@ -65,7 +65,7 @@ Make a world class tree. A few guidelines on designing a good tree:
 
 Have the utmost empathy for the reader and you'll do a good job.
 
-4. **Storyboard review.** An outline is cheap to change; fix the teaching here, not in HTML.
+4. **Storyboard review.** An outline is cheap to change; fix the teaching here.
 Spawn the four reviewers in `agents/` (Chad, the curious kid, the restless reader, the SME)
 on the storyboard, each with only the persona, its brief, and the storyboard. Read the
 "Review" step below for how to take what they say.
