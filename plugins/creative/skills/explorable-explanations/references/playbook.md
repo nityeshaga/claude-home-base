@@ -21,6 +21,7 @@ so you can apply them with judgment rather than mechanically.
 7. Simulation: what it is for
 8. The two visions: pedagogy vs. argument
 9. Case's 2017 wishlist — the frontier this skill targets
+10. Design patterns from the 2014 and 2018 posts
 
 ---
 
@@ -236,3 +237,34 @@ explorables that use real data; that pose *problems*, not just puzzles; that are
 partially reader-generated; that enable dialogue between learners; that are revisited
 over time rather than consumed once. The tree structure, per-reader persona, shareable
 state and sandbox-with-exposed-parameters in this skill are direct responses to that list.
+
+
+## 10. Design patterns from the 2014 and 2018 posts
+
+These two posts collect patterns for putting the ideas above into practice. The 2014 post includes seven patterns and two supporting notes; the 2018 post adds four more.
+
+### The original patterns (2014)
+
+Source: [Explorable Explanations](https://blog.ncase.me/explorable-explanations/), September 8, 2014. Case collected these patterns and considerations at a workshop.
+
+- **Do & Show & Tell.** Choose text, graphics, animation, or interaction for what each explains best; let them work together.
+- **Interest Curves.** Open with an accessible hook, develop the basics, and finish with something the reader can now appreciate.
+- **Start small, build big.** Teach individual mechanics, then combine them: A, B, A+B, C, A+C, B+C, A+B+C.
+- **See, Model, Apply.** Let readers generate observations, infer a pattern, and use it. In Angry Physics, shots build a graph; targets give that understanding a use.
+- **Cognitive Gates.** Give readers time to investigate and acquire prerequisites before moving into material that depends on them.
+- **Author-guided & Player-driven.** Readers choose their actions within an experience whose structure the author shapes.
+- **Procedural Rhetoric.** Guide discovery through goals, rules, and available actions.
+
+Two supporting notes:
+
+- **Playtesting.** Watch people use the explanation; skipped prerequisites may reveal where gates help.
+- **Gamification.** Distinguish learning from behaviour change. Consider achievement, exploration, social connection, and competition as overlapping motivations, not fixed reader types.
+
+### Four more patterns (2018)
+
+Source: [Explorable Explanations: 4 More Design Patterns](https://blog.ncase.me/explorable-explanations-4-more-design-patterns/), June 20, 2018.
+
+- **Puzzle It Out.** Give readers a problem that requires understanding the system, rather than following prescribed steps. In SineRider, shaping curves to guide a sled makes the relationship between equations and curves useful. This suits subjects that can be simulated, including mathematics, programming, and science.
+- **Place Your Bets!** Ask for a prediction before revealing the outcome. The difference between an expectation and the result gives the reader something to think about. Examples include drawing an expected graph in You Draw It and predicting winners in The Evolution of Trust. This works when the outcome can be checked.
+- **Role Play.** Put readers inside a dilemma and let them make decisions under its constraints. A Syrian Journey explores refugees’ choices. This suits ethical, political, and philosophical questions without a single correct answer.
+- **Sandbox Mode.** Let readers pursue their own questions or creations. Avoid overwhelming beginners: make the simulation simple enough to enter immediately, or introduce its parts gradually before opening the full sandbox. Examples include Learning Music and Earth Primer.
