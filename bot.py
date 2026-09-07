@@ -179,6 +179,59 @@ except Exception as _sf_err:  # pragma: no cover — degraded path, still gating
                 found.append(label)
         return out, sorted(set(found))
 
+# Batch/cron proactive-DM gate — see cron_dm_gate.py for the 2026-09-06 22:07
+# incident (daily-diary DMed Nityesh a 1,651-char bug report on a Sunday night,
+# -0.9) and the three earlier instances of the class, including the flat -10
+# across every battery on 2026-06-09.
+#
+# Same asymmetry as secret_filter above: this must NOT degrade to off on an
+# ImportError, so the fallback is a live minimal gate. If the module is missing,
+# the fallback refuses EVERY batch DM rather than allowing them — the deliverable
+# allowlist lives in the module, and losing the allowlist is not a reason to lose
+# the wall.
+try:
+    import cron_dm_gate  # noqa: E402
+except Exception as _cdg_err:  # pragma: no cover — degraded path, still gating
+    logger.error(
+        f"cron_dm_gate unavailable, FALLING BACK to refuse-all-batch-DMs: {_cdg_err}"
+    )
+
+    class _FallbackGate:
+        ADMIN_CHANNEL = "C0ANDP6KAHM"
+
+        class Verdict:
+            def __init__(self, allowed, context, reason, scanned, warnings=None):
+                self.allowed, self.context = allowed, context
+                self.reason, self.scanned = reason, scanned
+                self.warnings = warnings or []
+
+        def evaluate(self, user_id, message, deliverable=None, env=None):
+            e = os.environ if env is None else env
+            thread = (e.get("CLAUDE_THREAD_TS") or "").strip()
+            scanned = (
+                f"recipient={user_id} msg_len={len(message)} "
+                f"deliverable={deliverable or 'none'} "
+                f"CLAUDE_THREAD_TS={thread or 'unset'} (DEGRADED FALLBACK)"
+            )
+            if thread:
+                return self.Verdict(True, "live", "live session", scanned)
+            return self.Verdict(
+                False, "batch",
+                "cron_dm_gate module failed to import; refusing all batch DMs",
+                scanned,
+            )
+
+        def refusal_text(self, verdict, user_id):
+            return (
+                "RESULT BLOCKED\n"
+                f"cron_dm_gate (degraded fallback) refused a DM to {user_id}.\n"
+                f"SCANNED  {verdict.scanned}\nREASON   {verdict.reason}\n"
+                f"ROUTE INSTEAD: bot.py --channel {self.ADMIN_CHANNEL} "
+                '"<@USER> <the ask>"'
+            )
+
+    cron_dm_gate = _FallbackGate()
+
 # The Slack user ID of this bot — set via BOT_USER_ID env var.
 # Used to identify the bot's own messages in thread history and to prevent
 # duplicate handling of @mentions. Find it in your Slack app settings or
@@ -1091,12 +1144,38 @@ def send_dm(
     session_id: str | None = None,
     thread_ts: str | None = None,
     forward_to: str | None = None,
+    deliverable: str | None = None,
 ) -> str | None:
-    """Send a proactive DM. Returns thread_ts.
+    """Send a proactive DM. Returns thread_ts, or None if the gate refused.
 
     If forward_to is set, registers a forward so the reply routes back
     to that thread's live session.
+
+    Gated by cron_dm_gate: a batch/cron session may only DM a human a
+    deliverable it declares and that is on the allowlist. The check lives here
+    rather than at the argparse call sites so that no future caller can route
+    around it.
     """
+    verdict = cron_dm_gate.evaluate(user_id, message, deliverable=deliverable)
+    if not verdict.allowed:
+        audit_logger.warning(
+            f"BLOCKED_CRON_DM | USER:{user_id} | CONTEXT:{verdict.context} "
+            f"| DELIVERABLE:{deliverable or 'none'} | MSG_LEN:{len(message)} "
+            f"| REASON:{verdict.reason}"
+        )
+        logger.error(
+            f"cron_dm_gate BLOCKED a DM to {user_id}: {verdict.reason} "
+            f"[{verdict.scanned}]"
+        )
+        print(cron_dm_gate.refusal_text(verdict, user_id), file=sys.stderr)
+        return None
+    for w in verdict.warnings:
+        audit_logger.warning(
+            f"CRON_DM_WARNING | USER:{user_id} "
+            f"| DELIVERABLE:{deliverable or 'none'} | {w}"
+        )
+        logger.warning(f"cron_dm_gate warning on DM to {user_id}: {w}")
+
     response = slack_client.conversations_open(users=[user_id])
     channel_id = response["channel"]["id"]
 
@@ -1775,19 +1854,31 @@ def main():
         "--channel", nargs=2, metavar=("CHANNEL", "MESSAGE"),
         help="Post a message to a channel and exit",
     )
+    parser.add_argument(
+        "--deliverable", metavar="NAME",
+        help="Declare which subscribed deliverable this DM is, so cron_dm_gate "
+             "will allow it from a batch session. Must be a key of "
+             "SANCTIONED_DELIVERABLES in cron_dm_gate.py.",
+    )
     args = parser.parse_args()
 
-    # CLI modes — send and exit
+    # CLI modes — send and exit.
+    #
+    # Exit 3 means cron_dm_gate REFUSED. It is deliberately not 1: a crashed
+    # wrapper and a refusal exiting with the same code cost a day on
+    # 2026-08-12, so a corpse and a verdict are distinguishable from outside.
     if args.send:
         thread_ts = send_dm(
             args.send[0], args.send[1],
             session_id=args.session_id,
             thread_ts=args.thread,
             forward_to=args.forward_to,
+            deliverable=args.deliverable,
         )
         if thread_ts:
             print(thread_ts)
-        return
+            return
+        sys.exit(3)
 
     if args.send_result:
         raw = sys.stdin.read().strip()
@@ -1800,7 +1891,12 @@ def main():
             session_id = None
         if not message:
             message = "Job completed but produced no output."
-        send_dm(args.send_result, message, session_id=session_id, thread_ts=args.thread)
+        ts = send_dm(
+            args.send_result, message, session_id=session_id,
+            thread_ts=args.thread, deliverable=args.deliverable,
+        )
+        if not ts:
+            sys.exit(3)
         return
 
     if args.channel:

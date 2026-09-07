@@ -58,7 +58,7 @@ MUST_NOT_REDACT = [
     "AKIA-prefixed IDs are AWS access keys; we do not use AWS.",
     "The private key block is stored in the Keychain under service Cloudflare.",
     "https://every-docs.pages.dev deployed fine; 100 of 100 runs failed before that.",
-    "Woodline Partners — Business Teams session 3 is confirmed for Thursday.",
+    "Northwind Partners — Business Teams session 3 is confirmed for Thursday.",
     "",
 ]
 
