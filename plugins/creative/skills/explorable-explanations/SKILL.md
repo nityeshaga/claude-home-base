@@ -22,3 +22,19 @@ Build a dense interconnected tree of short HTML slide decks, shaped like the top
 - Then build out the rest of the explorable.
 - Screenshot every slide and rework any that fails the craft rules.
 - Afterwards, use a few adversarial subagents to judge the whole experience across Writing, UI, Visuals, and Teaching, find violations against the craft doc, and flag items to fix.
+- At the very end, launch a separate subagent to give it a visual identity that’s as memorable as the experience itself with the instructions as given below:
+
+```
+Launch a separate subagent to act as a creative director. Have it review the code and visually inspect a few key pages, including the playables. Assume the structure, teaching, and writing are already excellent. Its job is to bring personality to the design.
+
+Ask it to propose a few creative directions that feel specific to this topic. Think at two scales:
+
+- The overall experience: like color, typography, backgrounds, texture, illustration style, motion, and recurring visual motifs that make everything feel part of the same world.
+- Individual slides or groups of slides: distinctive treatments for key pages—an expressive character, a surprising SVG illustration, a playful background, a mascot, or a small visual joke that makes an idea stick.
+
+Give it permission to be a radical design thinker with a tasteful restraint. What could make someone recognize this explorable from a single screenshot? Consider shaders or 3D effects combined with images where they would make the experience more interesting. It can use the openai-imagegen skill for image generation.
+
+Keep the clarity and ease of use that already work. Let the personality come from the subject and the experience of learning it.
+
+Have the creative director recommend its strongest ideas, with concrete examples of how it would transform a few existing pages. I want to be able to picture the result.
+```
