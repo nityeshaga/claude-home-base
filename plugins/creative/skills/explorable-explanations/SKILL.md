@@ -11,6 +11,7 @@ Build a dense interconnected tree of short HTML slide decks, shaped like the top
 
 1. [The Explorable Explanations Playbook](references/playbook.md) — the Nicky Case playbook, summarized from public articles and talks, with ideas from Bret Victor and Steven Strogatz. Read once per project to understand why the craft rules exist.
 2. [Explorable craft](references/explorable-craft.md) — practical lessons, recurring mistakes, and the details that often go wrong. Read before planning and building, and return to it when reviewing.
+3. [The Evolution of Trust visual references](references/evolution-of-trust.md) — before planning or building, open and visually inspect all three linked screenshots with an image-viewing tool. They establish the intended visual feel; reading the captions alone is not enough. Use them for broad visual direction while letting the topic shape the design.
 
 ## Working rhythm
 
