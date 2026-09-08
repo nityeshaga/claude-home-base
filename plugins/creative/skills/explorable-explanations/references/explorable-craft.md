@@ -4,6 +4,13 @@ The craft of building a great explorable explanation: practical lessons and thin
 
 You are building an immersive experience, a maze, a rabbit hole for the curious reader to get lost in. This is not simply breaking an article into slides. Inspired by Nicky Case, we are taking the idea one level further: a non-linear tree whose structure is a fingerprint of the topic.
 
+## Four dimensions of quality
+
+- **Writing:** Grab the reader’s attention from the start and sustain a natural flow that makes them want to turn the next page.
+- **UI:** Make the interface feel fresh, creative, and carefully considered, with attention to every detail.
+- **Visuals:** Make every playable, diagram, animation, and sandbox well-crafted, easy to understand, and useful in teaching the idea it serves.
+- **Teaching:** Understand where the reader starts, anticipate their confusions, and shape the whole journey around what they should understand or be able to do by the end.
+
 ## Form
 
 Give each slide one clear idea and enough room for the reader to absorb it.
