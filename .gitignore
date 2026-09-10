@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .sessions.json
 *.log
+AGENTS.md
