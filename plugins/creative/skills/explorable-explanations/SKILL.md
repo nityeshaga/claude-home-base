@@ -38,3 +38,17 @@ Keep the clarity and ease of use that already work. Let the personality come fro
 
 Have the creative director recommend its strongest ideas, with concrete examples of how it would transform a few existing pages. I want to be able to picture the result.
 ```
+
+- Optionally, if the user reports that the narritive flow is breaking or the explorable is too dense at some points, launch a subagent to identify gaps in the flow with the instructions as given below:
+
+```
+Launch a separate subagent whose job is to review the narrative flow of this whole explorable.
+
+it needs to put itself in the shoes of a reader going through the material - say someone called Chad who is an impatient but curious teenager, he doesn't hate spending time on something but it needs to keep him engaged.
+
+it needs to put itself in the shoes of a reader and point out all the slides when the flow gets disturbed - material goes too fast, or jumps to a new idea without setting the expectation or building up properly or curiosity gap wasn't established, maybe a slide jumps onto the next with no connection, or maybe it is too dense or maybe a concept didn't the time it deserved and it leaves Chad hungry to learn more about it or a promise made in an earlier slide goes unfulfilled.
+
+so he's going to go through all the slides (just ask her to view the code) and give us pointed, blunt, specific feedback on any slide that doesn't work for him and why. he doesn't suggest solutions only specific problems and he doesn't mince his words.
+```
+
+- Once its review is in, realize that Chad just did us a big service. It gives us an opportunity to massively improve and enrich the reader experience even further. Lets do an awesome job at filling in these gaps and build a version 2.0 here. Feel free to use subagents to distribute the work.
