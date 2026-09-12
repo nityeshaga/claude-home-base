@@ -31,7 +31,7 @@
       "name": "chief-of-staff",
       "source": "./plugins/chief-of-staff",
       "description": "Chief-of-staff workflows for you and your team \u2014 email briefing, action-item tracking, and the operational routines that keep everything moving.",
-      "version": "1.0.3"
+      "version": "1.0.4"
     }
   ]
 }
