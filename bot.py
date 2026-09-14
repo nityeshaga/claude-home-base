@@ -563,6 +563,48 @@ LIMIT_PAUSE_FALLBACK = 1800  # seconds, if the reset time can't be parsed
 _limit_pause_lock = threading.Lock()
 _limit_pause = {"until": 0.0, "announced": False}
 
+# Model-specific rate limits are a different animal from the account-wide
+# usage limits above. The CLI says e.g.:
+#   "You've reached your Fable limit. Switch to another model, or manage usage
+#    credits at claude.ai/settings/usage…, to continue."
+# Other models still work, so pausing is wrong and so is leaking the text
+# (2026-09-13/14: Kate, Katie and Nityesh each got the raw notice and no
+# answer). Instead: swap new spawns to FALLBACK_MODEL for MODEL_LIMIT_WINDOW
+# seconds and replay the turn that hit the wall on a fresh process.
+MODEL_LIMIT_RE = re.compile(
+    r"^\s*You've reached your (?P<model>[\w .\-\[\]]{1,40}?) limit\b.*?\bswitch to another model",
+    re.I | re.S,
+)
+FALLBACK_MODEL = os.environ.get("CLAUDE_FALLBACK_MODEL", "claude-opus-5").strip()
+MODEL_LIMIT_WINDOW = int(os.environ.get("MODEL_LIMIT_WINDOW", "3600"))
+_model_limit_lock = threading.Lock()
+_model_limit = {"until": 0.0, "model": ""}
+
+
+def _enter_model_limit(text: str) -> bool:
+    """Record a model-specific limit notice. Returns True if this call opened
+    the fallback window (i.e. the caller should announce it once)."""
+    m = MODEL_LIMIT_RE.search(text or "")
+    limited = (m.group("model") if m else "").strip() or "primary"
+    with _model_limit_lock:
+        fresh = time.time() >= _model_limit["until"]
+        _model_limit["until"] = time.time() + MODEL_LIMIT_WINDOW
+        _model_limit["model"] = limited
+        return fresh
+
+
+def _model_fallback_active() -> bool:
+    with _model_limit_lock:
+        return time.time() < _model_limit["until"]
+
+
+def _apply_model_fallback(model):
+    """The model a new process should use: FALLBACK_MODEL while a model limit
+    is active, otherwise whatever was configured."""
+    if FALLBACK_MODEL and _model_fallback_active() and (model or "") != FALLBACK_MODEL:
+        return FALLBACK_MODEL
+    return model
+
 
 def _parse_limit_reset(text: str) -> float:
     """Parse 'resets 4pm (UTC)' into an epoch timestamp (next occurrence)."""
@@ -681,6 +723,7 @@ def _spawn_claude_process(
     """
     battery_context = _get_trust_battery_context()
     model, effort, model_prompt = resolve_model_settings(channel, user_id)
+    model = _apply_model_fallback(model)
     cmd = [
         "claude",
         "-p", battery_context,
@@ -895,7 +938,27 @@ def _reader_loop(session: LiveSession) -> None:
         session._turn_done.set()
         logger.info(f"Reader loop ended for thread {session.thread_ts} (pid={session.proc.pid})")
         with _live_sessions_lock:
+            if _live_sessions.get(session.thread_ts) is session:
+                _live_sessions.pop(session.thread_ts, None)
+
+
+
+def _retire_live_session(session: LiveSession) -> None:
+    """Drop a session from the registry and end its process. Used when the
+    process has to be replaced (model-limit fallback); the thread resumes
+    with full context on the next spawn via --resume."""
+    with _live_sessions_lock:
+        if _live_sessions.get(session.thread_ts) is session:
             _live_sessions.pop(session.thread_ts, None)
+    try:
+        session.proc.stdin.close()
+        session.proc.wait(timeout=5)
+    except Exception:
+        try:
+            session.proc.kill()
+        except Exception:
+            pass
+    session._turn_done.set()
 
 
 def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "") -> LiveSession:
@@ -1688,10 +1751,21 @@ def process_message_async(event: dict) -> None:
     all_texts = []
     first_text_sent = False
     skip_detected = False
+    model_limited = False
+    model_limit_text = ""
 
     def on_text(text_block: str):
         """Called for each text block Claude produces — post it to Slack immediately."""
-        nonlocal first_text_sent, skip_detected
+        nonlocal first_text_sent, skip_detected, model_limited, model_limit_text
+
+        # Model-specific limit ("reached your Fable limit … switch to another
+        # model"): not an outage. Remember the notice; the turn loop respawns
+        # this thread on FALLBACK_MODEL and replays the message.
+        if MODEL_LIMIT_RE.search(text_block):
+            model_limited = True
+            model_limit_text = text_block
+            logger.warning(f"Model limit hit in thread {thread_ts}: {text_block!r}")
+            return
 
         # Usage-limit notices are synthesized by the CLI, not the model.
         # Suppress them; announce the outage once and pause inbound handling.
@@ -1780,18 +1854,51 @@ def process_message_async(event: dict) -> None:
         # Acquire turn_lock — this serializes the send→wait cycle.
         # If another message is already being processed, we block here.
         with session.turn_lock:
-            session._on_text = on_text
-            session._turn_done.clear()
+            timed_out = False
+            for attempt in (0, 1):
+                session._on_text = on_text
+                session._turn_done.clear()
+                _send_to_claude(session, text)
+                timed_out = not session._turn_done.wait(timeout=CLAUDE_TIMEOUT)
+                if timed_out or not model_limited or attempt or not FALLBACK_MODEL:
+                    break
+                # Model-specific limit: retire this process, start a fresh one on
+                # the fallback model (same --resume session, so no context is
+                # lost) and replay the message exactly once. New threads during
+                # the window go straight to the fallback via _apply_model_fallback.
+                announce = _enter_model_limit(model_limit_text)
+                _retire_live_session(session)
+                if announce:
+                    try:
+                        slack_client.chat_postMessage(
+                            channel=channel, thread_ts=thread_ts,
+                            text=(f"My usual model is rate-limited right now, so I'm answering on "
+                                  f"{FALLBACK_MODEL} for the next ~{MODEL_LIMIT_WINDOW // 60} minutes."),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Model-fallback notice failed: {e}")
+                model_limited = False
+                session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
+                logger.info(f"Model-limit fallback: respawned thread {thread_ts} on {FALLBACK_MODEL}")
 
-            _send_to_claude(session, text)
-
-            if not session._turn_done.wait(timeout=CLAUDE_TIMEOUT):
+            if timed_out:
                 try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
                 except Exception: pass
                 minutes = CLAUDE_TIMEOUT // 60
                 slack_client.chat_postMessage(
                     channel=channel, thread_ts=thread_ts,
                     text=f"Sorry, that timed out after {minutes} minutes. Try a simpler question?",
+                )
+                return
+
+            # Fallback model is rate-limited too — say so instead of going silent.
+            if model_limited:
+                try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
+                except Exception: pass
+                logger.error(f"Model limit on fallback model too in thread {thread_ts}")
+                slack_client.chat_postMessage(
+                    channel=channel, thread_ts=thread_ts,
+                    text="Rate-limited on both my usual model and the fallback right now. Try again in a little while.",
                 )
                 return
 
