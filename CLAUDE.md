@@ -34,6 +34,6 @@ The generalized, open-source version of CC Home Base (Luo Ji's installation). Th
 
 - This repo uses `bot.py`, not `luoji_bot.py` (that's the cc-home-base variant)
 - The `CLAUDE.md.example` here is a template with placeholders — don't fill them in, they're for end users
-- Plugin changes need version bumps or the auto-updater won't pick them up
+- Plugin changes need version bumps or the auto-updater won't pick them up. Bump plugin and marketplace json files with a patch/minor/major version bump as required before making a PR.
 
 Keep this CLAUDE.md up-to-date with the latest changes / decisions made in the project.

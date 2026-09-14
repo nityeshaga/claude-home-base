@@ -51,4 +51,4 @@ it needs to put itself in the shoes of a reader and point out all the slides whe
 so he's going to go through all the slides (just ask her to view the code) and give us pointed, blunt, specific feedback on any slide that doesn't work for him and why. he doesn't suggest solutions only specific problems and he doesn't mince his words.
 ```
 
-- Once its review is in, realize that Chad just did us a big service. It gives us an opportunity to massively improve and enrich the reader experience even further. Lets do an awesome job at filling in these gaps and build a version 2.0 here. Feel free to use subagents to distribute the work.
+- Once its review is in, realize that Chad just did us a big service. It gives us an opportunity to massively improve and enrich the reader experience even further. Lets do an awesome job at filling in these gaps and build a version 2.0 here by editing or adding new slides. Don't shy away from extra work - feel free to use subagents to distribute the work.
