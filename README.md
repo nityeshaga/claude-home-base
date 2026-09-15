@@ -44,6 +44,7 @@ misc/file-explorer/     # Web file browser: markdown + HTML comments, /models pa
 search/                 # Hybrid keyword + vector search over local files and conversation logs
 jobs/                   # Scheduled (launchd) jobs, starting with the daily diary
 trust-battery/          # Nightly judge that sets how much autonomy your AI gets per person
+voice-bridge/           # Call your AI: browser or Telegram voice → GPT-Live-1 → the same Claude sessions (see voice-bridge/README.md)
 
 plugins/
 ├── coding/             # Precision coding tools
@@ -78,6 +79,10 @@ You (anywhere) → Slack → Cloudflare Tunnel → Your Mac → Claude Code CLI
                                               + plugins + skills
                                               + full filesystem access
 ```
+
+## Voice (optional)
+
+[`voice-bridge/`](voice-bridge/) adds a second medium into the same AI: a phone page in the browser, or a Telegram call, answered by OpenAI's GPT-Live-1 in client-delegation mode with a Claude Code session as the brain. One call is one Slack DM thread and one fresh Claude session, so anything visual lands in the thread and replying there afterwards continues the call. See its README for the architecture, setup and the Telegram caveat.
 
 ## Codex backend (optional)
 
