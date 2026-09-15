@@ -11,6 +11,7 @@ The generalized, open-source version of CC Home Base (Luo Ji's installation). Th
 - `identity.md` / `about-you-and-how-you-came-to-life.md` — identity templates
 - `plugins/` — marketplace of skills (coding, creative, more-ai, chief-of-staff)
 - `search/` — hybrid keyword + vector search over local files and conversation history
+- `voice-bridge/` — voice front door (browser page or Telegram call → GPT-Live-1 → a fresh Claude session per call, paired with a Slack thread)
 - `index.html` — setup guide hosted at nityeshaga.github.io/claude-home-base
 
 ## Who cares about it
