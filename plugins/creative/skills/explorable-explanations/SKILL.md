@@ -18,8 +18,7 @@ Build a dense interconnected tree of short HTML slide decks, shaped like the top
 - Go through the documentation for the topic first.
 - Before building, write a detailed, fleshed-out `plan.md` like a scriptwriter scripting the whole reader experience: the opening hook, key passages of writing, what the reader sees, does, and discovers, and how they travel through the branches and transitions. Show what draws them onward and how the journey builds toward the intended learning outcome.
 - Use the [frontend design guidance](references/frontend-design.md) for the UI.
-- Pause and show the first batch before doing the rest.
-- Then build out the rest of the explorable.
+- Build the whole explorable.
 - Screenshot every slide and rework any that fails the craft rules.
 - Afterwards, use a few adversarial subagents to judge the whole experience across Writing, UI, Visuals, and Teaching, find violations against the craft doc, and flag items to fix.
 - At the very end, launch a separate subagent to give it a visual identity that’s as memorable as the experience itself with the instructions as given below:
