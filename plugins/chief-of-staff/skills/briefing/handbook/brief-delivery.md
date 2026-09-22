@@ -9,6 +9,7 @@ How to format, deliver, and archive the brief — then reset the notepad for the
 3. **Format it** according to the user's delivery preferences (HTML, markdown, Slack message, etc.). Apply the personality — the delivered brief is where the Alfred voice comes through. The notepad is operational; the delivered brief is the polished output.
 4. **Archive it** — save the delivered brief to `~/briefs/{user}/{DATE}.md` (or `.html`, matching the format). Create the directory if it doesn't exist.
 5. **Deliver it** via the user's preferred channel (Slack DM, email, file link, etc.)
+6. **Deliver exactly once.** If a send call errors, times out, or returns ambiguously, do NOT retry blindly — a timeout is not proof of failure. First check the channel for a message posted since the run started (e.g. Slack `conversations_history`); only re-send if nothing actually landed. Blind retries deliver the same brief two or three times, which reads as spam in the one channel the user asked to trust.
 
 ## Brief Preferences
 
