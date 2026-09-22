@@ -543,8 +543,22 @@ REMINDER_EVERY = 10
 # it. We intercept that text before it reaches Slack, announce the outage
 # once, and stop forwarding inbound messages until the reset time. Limits are
 # account-wide, so the pause is a single global, not per-thread.
-LIMIT_RE = re.compile(r"You've hit your (usage )?limit", re.I)
+# Observed variants (2026-06 → 2026-09):
+#   "You've hit your limit · resets 9am (UTC)"
+#   "You've hit your org's monthly usage limit"
+#   "You've hit your monthly spend limit · raise it at claude.ai/settings/usage… · your session limit resets 4:50pm (UTC)"
+# Match anything between "You've hit your" and "limit" so new wordings don't leak to Slack.
+LIMIT_RE = re.compile(r"^\s*You've hit your [^·\n]{0,40}?\blimit\b", re.I)
+# Monthly / org / spend limits don't self-reset — a human has to raise them at
+# claude.ai/settings/usage. Those get escalated, not just paused.
+HARD_LIMIT_RE = re.compile(r"\b(monthly|org's|spend)\b", re.I)
 LIMIT_RESET_RE = re.compile(r"resets\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.I)
+# Who to tell when a hard limit is hit. Comma-separated Slack user IDs and an
+# optional channel ID. Empty = no escalation (the in-thread notice still posts).
+LIMIT_ALERT_USERS = tuple(
+    u.strip() for u in os.environ.get("LIMIT_ALERT_USERS", "").split(",") if u.strip()
+)
+LIMIT_ALERT_CHANNEL = os.environ.get("LIMIT_ALERT_CHANNEL", "").strip()
 LIMIT_PAUSE_FALLBACK = 1800  # seconds, if the reset time can't be parsed
 _limit_pause_lock = threading.Lock()
 _limit_pause = {"until": 0.0, "announced": False}
@@ -574,6 +588,29 @@ def _limit_paused() -> bool:
             _limit_pause["until"] = 0.0
             _limit_pause["announced"] = False
         return _limit_pause["until"] > 0.0
+
+
+def _alert_hard_limit(text: str, channel: str, thread_ts: str, until: datetime) -> None:
+    """Escalate a non-self-resetting limit (monthly spend / org usage) to the
+    people who can raise it. Called at most once per pause window."""
+    msg = (
+        f"🚨 Andy hit a hard usage limit and is paused until an admin raises it.\n"
+        f"CLI said: `{text.strip()}`\n"
+        f"Raise it at https://claude.ai/settings/usage — I'll retry around {until:%-I:%M%p} UTC "
+        f"and re-alert if it's still blocked. Triggered in "
+        f"<https://slack.com/archives/{channel}/p{thread_ts.replace('.', '')}|this thread>."
+    )
+    for uid in LIMIT_ALERT_USERS:
+        try:
+            dm = slack_client.conversations_open(users=uid)
+            slack_client.chat_postMessage(channel=dm["channel"]["id"], text=msg)
+        except Exception as e:
+            logger.error(f"Hard-limit alert DM to {uid} failed: {e}")
+    if LIMIT_ALERT_CHANNEL:
+        try:
+            slack_client.chat_postMessage(channel=LIMIT_ALERT_CHANNEL, text=msg)
+        except Exception as e:
+            logger.error(f"Hard-limit alert to {LIMIT_ALERT_CHANNEL} failed: {e}")
 
 
 def _enter_limit_pause(text: str) -> float | None:
@@ -1659,15 +1696,21 @@ def process_message_async(event: dict) -> None:
         # Usage-limit notices are synthesized by the CLI, not the model.
         # Suppress them; announce the outage once and pause inbound handling.
         if LIMIT_RE.search(text_block):
+            hard = bool(HARD_LIMIT_RE.search(text_block))
             until_epoch = _enter_limit_pause(text_block)
-            logger.warning(f"Usage limit hit in thread {thread_ts}: {text_block!r}")
+            logger.warning(f"{'Hard' if hard else 'Session'} usage limit hit in thread {thread_ts}: {text_block!r}")
             if until_epoch:
                 until = datetime.fromtimestamp(until_epoch, timezone.utc)
-                slack_client.chat_postMessage(
-                    channel=channel, thread_ts=thread_ts,
-                    text=(f"I've run out of usage credits — I'll be back around "
-                          f"{until:%-I:%M%p} UTC. Anything sent before then won't get a reply."),
-                )
+                if hard:
+                    notice = (f"I've hit the account's monthly spend limit, which only an admin can raise. "
+                              f"I've flagged Nityesh and will retry around {until:%-I:%M%p} UTC. "
+                              f"Anything sent before then won't get a reply.")
+                else:
+                    notice = (f"I've run out of usage credits — I'll be back around "
+                              f"{until:%-I:%M%p} UTC. Anything sent before then won't get a reply.")
+                slack_client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=notice)
+                if hard:
+                    _alert_hard_limit(text_block, channel, thread_ts, until)
             return
 
         # Check for SKIP on the very first text block (channel relevance filter)
