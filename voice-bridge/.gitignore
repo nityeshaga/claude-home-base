@@ -1,0 +1,12 @@
+.env
+venv/
+certs/
+logs/
+calls/
+state.json
+callers.json
+telegram/allow.json
+telegram/*.session
+telegram/*.session-journal
+telegram/venv/
+__pycache__/
