@@ -1810,11 +1810,25 @@ def _interrupt_session(session: LiveSession) -> bool:
         logger.warning(f"Interrupt write failed for {session.thread_ts}: {e}")
     if session._turn_done.wait(timeout=5):
         return True
-    # Interrupt didn't land — hard-kill; the thread resumes via --resume next message
-    try:
-        session.proc.terminate()
-    except Exception:
-        pass
+    # Interrupt didn't land — hard-kill; the thread resumes via --resume next message.
+    # SIGTERM, then SIGKILL: a CLI wedged in a hung tool call ignores SIGTERM, and a
+    # survivor stays in _live_sessions, so every later message in that thread is written
+    # to a stdin nobody reads and the thread goes silent with no error anywhere.
+    proc = session.proc
+    for stop in (proc.terminate, proc.kill):
+        try:
+            stop()
+            proc.wait(timeout=5)
+            break
+        except Exception:
+            pass
+    if proc.poll() is None:
+        logger.error(f"Could not kill pid={proc.pid} for thread {session.thread_ts}")
+    else:
+        logger.info(f"Hard-killed pid={proc.pid} for thread {session.thread_ts}")
+        with _live_sessions_lock:
+            if _live_sessions.get(session.thread_ts) is session:
+                _live_sessions.pop(session.thread_ts, None)
     session._turn_done.set()
     return False
 
@@ -1842,8 +1856,12 @@ def _maybe_stop_from_message(event: dict) -> bool:
 
     def _do_stop():
         clean = _interrupt_session(session)
-        note = ("stopped mid-run — tell me where to go instead" if clean
-                else "had to hard-kill the process; the thread resumes with full context on your next message")
+        if clean:
+            note = "stopped mid-run — tell me where to go instead"
+        elif session.proc.poll() is not None:
+            note = "had to hard-kill the process; the thread resumes with full context on your next message"
+        else:
+            note = "couldn't kill the process — it's wedged and this thread won't answer until it's cleared by hand"
         try:
             slack_client.chat_postMessage(
                 channel=session.channel, thread_ts=session.thread_ts,
