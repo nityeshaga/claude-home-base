@@ -47,6 +47,7 @@ plugins/
 │   └── skills/
 │       ├── creative-lead/    # Creative direction for any project
 │       ├── explorable-explanations/  # Topic → tree of no-scroll, single-viewport interactive pages
+│       ├── fried-ux-review/  # Adversarial UX review on Jason Fried's obvious / easy / possible rubric
 │       ├── lets-brainstorm/  # Timed coaching sessions
 │       ├── help-me-write/    # Collaborative writing (keeps your voice)
 │       └── interview-me/     # Timed discovery interviews
