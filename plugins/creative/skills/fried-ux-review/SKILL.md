@@ -25,4 +25,4 @@ There may also be flows that arent designed to empathize with what the user expe
 
 For the video's voice engine, use Google's voice model from the API. Write a narrative that is interesting to follow and maintains clear arc(/s).
 
-Be thorough, detail oriented and understand the motivations of the user of the app in depth. Use subagents if you want.
+Be thorough, detail oriented and understand the motivations of the user of the app in depth. Investigate every screen, every feature, tiny or big, understand its purpose and review it. Use subagents if you want.
