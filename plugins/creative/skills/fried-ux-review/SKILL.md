@@ -13,7 +13,7 @@ Read the article first, before you look at the app: [references/the-obvious-the-
 
 The interface is very busy, intimidating and confusing to use. The navigation is confusing if not outright buggy or wrong in places, things have just been added without thinking of the hierarchy of experience, every setting is crammed on all screens and people are finding key info they care about hard to see.
 
-There may also be flows that arent designed to empathize with what the user expects or copy that's unclear. 
+There may also be flows that aren't designed to empathize with what the user expects or copy that's unclear.
 
 ## What to produce
 
@@ -23,6 +23,6 @@ There may also be flows that arent designed to empathize with what the user expe
 
 3. Then think of 3-5 more radical ideas to change the UX of the app/interface in a more drastic way that could give the user what they need but aren't asking for or add an element of delight. Add them to the end of the video you created in step 2 in a new section "Take It or Leave It".
 
-For the video's voice engine, use Google's voice model from the API. Write a narrative that is interesting to follow and maintains clear arc(/s).
+For the video's voice engine, use Google's voice model from the API. Write a narrative that is interesting to follow and maintains clear arc(s).
 
 Be thorough, detail oriented and understand the motivations of the user of the app in depth. Investigate every screen, every feature, tiny or big, understand its purpose and review it. Use subagents if you want.
