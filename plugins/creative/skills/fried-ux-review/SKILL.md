@@ -21,7 +21,7 @@ There may also be flows that aren't designed to empathize with what the user exp
 
 2. Then make a video explainer with annotated screenshots of how you would restructure the UX, hide different elements and move things around to build something Jason Fried would approve of, so the user can trace every decision from before -> after with clear reasoning.
 
-3. Then think of 3-5 more radical ideas to change the UX of the app/interface in a more drastic way that could give the user what they need but aren't asking for or add an element of delight. Add them to the end of the video you created in step 2 in a new section "Take It or Leave It".
+3. Then think of 3-5 more radical ideas to change the UX of the app/interface in a more drastic way. These may address the findings in the HTML report that need a rethink and not just a simple restructuring or they could give the user what they need but aren't asking for or add an element of delight. Add them to the end of the video you created in step 2 in a new section "Take It or Leave It".
 
 For the video's voice engine, use Google's voice model from the API. Write a narrative that is interesting to follow and maintains clear arc(s).
 
