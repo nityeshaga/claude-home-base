@@ -43,6 +43,9 @@ from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk import WebClient
 
+# Load .env before bot_codex: it reads CODEX_HOME / CODEX_MODEL at import time.
+load_dotenv()
+
 import bot_codex  # alternate backend: rooms with "backend": "codex" route here
 
 # ---------------------------------------------------------------------------
