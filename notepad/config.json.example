@@ -1,0 +1,8 @@
+{
+  "_readme": "Copy to config.json (next to notepad.py). 'people' lists who has a notepad; with no config file, any name is accepted. slack_user_id is only needed by the notepad page, which opens a thread in that person's DM when they tap an action.",
+  "people": {
+    "alice": { "slack_user_id": "U0AAAAAAA" },
+    "bob": { "slack_user_id": "U0BBBBBBB" }
+  },
+  "closed_ledger": "~/closed-items.md"
+}

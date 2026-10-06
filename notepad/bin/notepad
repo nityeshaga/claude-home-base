@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""notepad: the command over notepad.py. See README.md. Exit 0 ok, 2 refused, 1 error."""
+import argparse
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, ROOT)
+import notepad as np  # noqa: E402
+
+
+def default_actor():
+    if os.environ.get("NOTEPAD_ACTOR"):
+        return os.environ["NOTEPAD_ACTOR"]
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
+    return f"session:{sid}" if sid else "unknown"
+
+
+def split_action(s):
+    if "::" not in s:
+        raise ValueError('--action must be "label::full instruction"')
+    label, instruction = s.split("::", 1)
+    return label.strip(), instruction.strip()
+
+
+def item_line(i):
+    tag = "" if i["kind"] == "needs_you" else " [someday]"
+    status = "" if i["status"] == "open" else f" ({i['status']}{', ' + i['closed_how'] if i['closed_how'] else ''})"
+    action = f"  -> {i['action_label']}" if i["action_label"] else ""
+    return f"#{i['id']} r{i['rank']} {i['waiting']}: {i['line']}{action}{tag}{status}"
+
+
+def show_item(i):
+    return "\n".join(f"{k}: {v}" for k, v in i.items() if v not in (None, ""))
+
+
+def run_line(r):
+    return (f"run #{r['id']} {r['department']}/{r['person']} {r['status']} started {r['started_at']}"
+            f" seconds={r['seconds']} in={r['tokens_in']} out={r['tokens_out']} subagents={r['subagents']}"
+            f" cost=${r['cost_usd']} archived={r['emails_archived']} added={r['items_added']}"
+            f" closed={r['items_closed']} session={r['session_id']}")
+
+
+def event_line(e):
+    ref = "".join(f" {k}={e[k]}" for k in ("item_id", "run_id") if e[k] is not None)
+    detail = json.dumps(e["detail"], ensure_ascii=False) if e["detail"] is not None else ""
+    return f"{e['id']} {e['at']} {e['actor']} {e['action']}{ref} {detail}"
+
+
+# Each handler returns (data, text).
+
+def cmd_add(a):
+    label = instruction = None
+    if a.action:
+        label, instruction = split_action(a.action)
+    i = np.add_item(a.person, a.line, added_by=a.by, waiting=a.waiting, action_label=label,
+                    action_instruction=instruction, department=a.dept,
+                    kind="someday" if a.someday else "needs_you", link_url=a.link, quote=a.quote,
+                    waiting_since=a.since, rank=a.rank, source_ref=a.source, session_id=a.session,
+                    session_is_shared=a.shared, actor=a.actor)
+    verb = "updated existing" if i.get("deduped") else "added"
+    return i, f"{verb} {item_line(i)}"
+
+
+def cmd_done(a):
+    i = np.close_item(a.id, a.how, a.why, actor=a.actor)
+    return i, f"closed {item_line(i)}"
+
+
+def cmd_dismiss(a):
+    i = np.close_item(a.id, "dismissed", a.why, actor=a.actor)
+    return i, f"dismissed {item_line(i)}"
+
+
+def cmd_update(a):
+    fields = {k: v for k, v in (("line", a.line), ("rank", a.rank), ("standing", a.standing),
+                                ("link_url", a.link), ("waiting_since", a.since)) if v is not None}
+    if a.action:
+        fields["action_label"], fields["action_instruction"] = split_action(a.action)
+    if not fields:
+        raise ValueError("nothing to update")
+    i = np.update_item(a.id, actor=a.actor, **fields)
+    return i, f"updated {item_line(i)}"
+
+
+def cmd_promote(a):
+    i = np.promote_item(a.id, actor=a.actor)
+    return i, f"promoted {item_line(i)}"
+
+
+def cmd_attach(a):
+    shared = True if a.shared else (False if a.own else None)
+    i = np.attach_session(a.id, channel=a.channel, thread_ts=a.thread, session_id=a.session,
+                          session_is_shared=shared, status=a.status, actor=a.actor)
+    return i, (f"attached #{i['id']} channel={i['slack_channel']} thread={i['slack_thread_ts']} "
+               f"session={i['session_id']} shared={i['session_is_shared']} status={i['status']}")
+
+
+def cmd_seen(a):
+    i = np.mark_seen(a.id, actor=a.actor)
+    return i, f"seen #{i['id']} at {i['seen_at']}"
+
+
+def cmd_list(a):
+    # --all: every item, open or closed, needs_you and someday (someday lines are tagged).
+    kind = "someday" if a.someday else (None if a.all else "needs_you")
+    items = np.list_items(a.person, status=None if a.all else np.OPEN, kind=kind, department=a.dept)
+    return items, "\n".join(map(item_line, items)) or "(nothing)"
+
+
+def cmd_show(a):
+    i = np.get_item(a.id)
+    return i, show_item(i)
+
+
+def cmd_dismissals(a):
+    items = np.recent_dismissals(a.person, a.days)
+    return items, "\n".join(f"{item_line(i)} dismissed {i['closed_at']}" for i in items) or "(none)"
+
+
+def cmd_prefs(a):
+    if a.op == "list":
+        rows = np.list_prefs(a.person)
+        return rows, "\n".join(f"{r['key']} = {r['value']}" for r in rows) or "(none)"
+    if not a.key:
+        raise ValueError(f"prefs {a.op} needs a key")
+    if a.op == "get":
+        r = np.get_pref(a.person, a.key)
+        return r, r["value"] if r else "(unset)"
+    if a.value is None:
+        raise ValueError("prefs set needs a value")
+    r = np.set_pref(a.person, a.key, a.value, quote=a.quote, actor=a.actor)
+    return r, f"{r['key']} = {r['value']}"
+
+
+def cmd_event(a):
+    eid = np.log_event(a.action, actor=a.actor, item_id=a.item, run_id=a.run, detail=a.detail)
+    return {"id": eid}, f"event {eid}"
+
+
+def cmd_run(a):
+    if a.op == "start":
+        rid = np.start_run(a.dept, a.person, model=a.model, effort=a.effort, mode=a.mode, actor=a.actor)
+        return {"id": rid}, str(rid)
+    if a.op == "finish":
+        nums = np.numbers_from_result(a.from_result) if a.from_result else {}
+        for k, v in (("emails_archived", a.archived), ("items_added", a.added),
+                     ("items_closed", a.closed), ("note", a.note)):
+            if v is not None:
+                nums[k] = v
+        r = np.finish_run(a.id, status=a.status, actor=a.actor, **nums)
+        return r, run_line(r)
+    r = np.last_run(a.dept, a.person)
+    return r, run_line(r) if r else "(no runs)"
+
+
+def cmd_log(a):
+    rows = np.events(item_id=a.item, run_id=a.run, action=a.action, since=a.since, limit=a.limit)
+    return rows, "\n".join(map(event_line, rows)) or "(no events)"
+
+
+def parser():
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", help="print JSON")
+    common.add_argument("--actor", default=default_actor(), help="who is acting (default: session id)")
+    p = argparse.ArgumentParser(prog="notepad", description="The notepad: what each person needs to see.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def cmd(name, fn, **kw):
+        s = sub.add_parser(name, parents=[common], **kw)
+        s.set_defaults(fn=fn)
+        return s
+
+    def person(s, required=True):
+        s.add_argument("--for", dest="person", required=required, choices=np.people() or None,
+                       help="whose notepad")
+
+    s = cmd("add", cmd_add, help="add an item")
+    person(s)
+    s.add_argument("--by", required=True, help="a person's name | agent:<name>")
+    s.add_argument("--line", required=True)
+    s.add_argument("--waiting")
+    s.add_argument("--action", help='"label::full instruction"')
+    s.add_argument("--dept")
+    s.add_argument("--since", help="waiting since, ISO date")
+    s.add_argument("--rank", type=int, default=100)
+    s.add_argument("--source", help="source_ref, e.g. gmail-thread:<id>")
+    s.add_argument("--link")
+    s.add_argument("--session")
+    s.add_argument("--shared", action="store_true", help="the session belongs to a job; fork it on tap")
+    s.add_argument("--quote", help="the person's own words")
+    s.add_argument("--someday", action="store_true")
+
+    s = cmd("done", cmd_done, help="close an item")
+    s.add_argument("id", type=int)
+    s.add_argument("--how", required=True, choices=tuple(np.STATUS_BY_HOW))
+    s.add_argument("--why")
+
+    s = cmd("dismiss", cmd_dismiss, help="close an item as dismissed")
+    s.add_argument("id", type=int)
+    s.add_argument("--why")
+
+    s = cmd("update", cmd_update, help="change an item")
+    s.add_argument("id", type=int)
+    s.add_argument("--line")
+    s.add_argument("--action", help='"label::full instruction"')
+    s.add_argument("--rank", type=int)
+    s.add_argument("--standing")
+    s.add_argument("--link")
+    s.add_argument("--since")
+
+    s = cmd("promote", cmd_promote, help="someday -> needs_you")
+    s.add_argument("id", type=int)
+
+    s = cmd("attach", cmd_attach, help="attach a Slack thread / session to an item")
+    s.add_argument("id", type=int)
+    s.add_argument("--channel")
+    s.add_argument("--thread")
+    s.add_argument("--session")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--shared", action="store_true")
+    g.add_argument("--own", action="store_true")
+    s.add_argument("--status", choices=np.OPEN)
+
+    s = cmd("seen", cmd_seen, help="mark an item seen")
+    s.add_argument("id", type=int)
+
+    s = cmd("list", cmd_list, help="list open items")
+    person(s)
+    s.add_argument("--all", action="store_true", help="include closed items and someday items")
+    s.add_argument("--someday", action="store_true", help="someday items instead of needs_you")
+    s.add_argument("--dept")
+
+    s = cmd("show", cmd_show, help="show one item")
+    s.add_argument("id", type=int)
+
+    s = cmd("dismissals", cmd_dismissals, help="recent dismissals")
+    person(s)
+    s.add_argument("--days", type=int, default=30)
+
+    s = cmd("prefs", cmd_prefs, help="preferences")
+    s.add_argument("op", choices=("get", "set", "list"))
+    person(s)
+    s.add_argument("key", nargs="?")
+    s.add_argument("value", nargs="?")
+    s.add_argument("--quote")
+
+    s = cmd("event", cmd_event, help="append an event")
+    s.add_argument("--action", required=True)
+    s.add_argument("--detail", help="JSON")
+    s.add_argument("--run", type=int)
+    s.add_argument("--item", type=int)
+
+    s = cmd("run", cmd_run, help="department runs: start | finish ID | last")
+    s.add_argument("op", choices=("start", "finish", "last"))
+    s.add_argument("id", type=int, nargs="?")
+    s.add_argument("--dept")
+    person(s, required=False)
+    s.add_argument("--model")
+    s.add_argument("--effort")
+    s.add_argument("--mode")
+    s.add_argument("--status", choices=("ok", "failed"))
+    s.add_argument("--from-result", dest="from_result")
+    s.add_argument("--archived", type=int)
+    s.add_argument("--added", type=int)
+    s.add_argument("--closed", type=int)
+    s.add_argument("--note")
+
+    s = cmd("log", cmd_log, help="read events")
+    s.add_argument("--item", type=int)
+    s.add_argument("--run", type=int)
+    s.add_argument("--action")
+    s.add_argument("--since")
+    s.add_argument("--limit", type=int, default=200)
+    return p
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
+    try:
+        if a.cmd == "run":
+            if a.op == "start" and not (a.dept and a.person):
+                raise ValueError("run start needs --dept and --for")
+            if a.op == "finish" and (a.id is None or not a.status):
+                raise ValueError("run finish needs a run id and --status")
+        data, text = a.fn(a)
+    except np.Refused as e:
+        print(json.dumps({"ok": False, "refused": str(e)}) if a.json else f"refused: {e}")
+        return 2
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        print(json.dumps({"ok": False, "error": msg}) if a.json else f"error: {msg}", file=sys.stderr)
+        return 1
+    print(json.dumps(data, ensure_ascii=False, indent=2) if a.json else text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
