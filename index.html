@@ -246,7 +246,7 @@
                     </button>
                     <div class="accordion-content">
                         <div class="px-5 pb-4 text-[0.92rem] text-slate-500 dark:text-slate-400 leading-relaxed">
-                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Tailscale creates an invisible, encrypted tunnel between your devices. Your laptop and the dedicated Mac join the same private network — as if they were on the same WiFi, even when you're in different locations. Each device gets a stable address (like 100.x.x.x) that never changes.
+                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Tailscale creates an invisible, encrypted tunnel between your devices. Your laptop and the dedicated Mac join the same private network — as if they were on the same WiFi, even when you're in different locations. Each device gets a name on that network (its MagicDNS name, like <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">your-mac</code>). Use the name, not the 100.x.x.x address behind it: the address changes if you ever replace the hardware.
                             <br><br>
                             <strong class="text-slate-900 dark:text-slate-100">Why do you need it?</strong> At home, you can SSH using the local network. But the moment you step out — a coffee shop, a co-working space, travelling — your home network is unreachable. Tailscale makes your Mac accessible from anywhere in the world, securely, without exposing anything to the public internet. Free for personal use.
                             <br><br>
@@ -316,7 +316,7 @@
                     </button>
                     <div class="accordion-content">
                         <div class="px-5 pb-4 text-[0.92rem] text-slate-500 dark:text-slate-400 leading-relaxed">
-                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Anthropic's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude</code> command-line tool. When the Slack bot receives a message, it runs <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude -p "your message"</code> — giving Claude access to your codebase, CLAUDE.md context, and any tools you configure. Powered by the $200/month Max subscription — flat rate, no per-message costs.
+                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Anthropic's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude</code> command-line tool. The Slack bot keeps one <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude</code> process running per Slack thread and feeds your messages into it — giving Claude access to your codebase, CLAUDE.md context, and any tools you configure, with replies streaming back as they are written. Powered by the $200/month Max subscription — flat rate, no per-message costs.
                             <br><br>
                             <strong class="text-slate-900 dark:text-slate-100">Why not the API?</strong> The CLI inherits everything — your project context, installed tools, plugins. The API would require rebuilding all of that. Plus, Max is flat-rate vs unpredictable API billing.
                         </div>
@@ -451,11 +451,11 @@
                             </div>
                         </li>
                         <li>Do the same on <strong class="text-slate-900 dark:text-slate-100">your main machine</strong> — same account</li>
-                        <li>Both devices now appear in your Tailscale dashboard with stable IPs like <strong class="text-slate-900 dark:text-slate-100">100.x.x.x</strong></li>
+                        <li>Both devices now appear in your Tailscale dashboard. Note the Mac's <strong class="text-slate-900 dark:text-slate-100">machine name</strong> — with MagicDNS on (the default), that name works as its address from any of your devices</li>
                         <li>In Tailscale preferences on the dedicated Mac, enable <strong class="text-slate-900 dark:text-slate-100">"Start Tailscale when I log in"</strong></li>
                     </ul>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
-                        <strong class="text-blue-800">At home</strong> you can SSH using the local address (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@your-mac.local</code>). <strong class="text-blue-800">Outside</strong> use the Tailscale IP (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@100.x.x.x</code>). Both always work.
+                        <strong class="text-blue-800">At home</strong> you can SSH using the local address (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@your-mac.local</code>). <strong class="text-blue-800">Outside</strong> use its Tailscale name (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@your-mac</code>). Both always work.
                     </div>
                 </div>
 
@@ -658,7 +658,9 @@
                         <span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt<br><br>
                         <span class="comment"># Configure environment variables</span><br>
                         <span class="cmd">cp</span> .env.example .env<br>
-                        <span class="cmd">nano</span> .env  <span class="comment"># Add your Slack tokens, Signing Secret, user IDs</span>
+                        <span class="cmd">nano</span> .env  <span class="comment"># Add your Slack tokens, Signing Secret, user IDs</span><br><br>
+                        <span class="comment"># Optional: choose which model answers in which channel or DM</span><br>
+                        <span class="cmd">cp</span> model-config.json.example model-config.json
                     </div>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
                         <strong class="text-amber-800 dark:text-amber-400">Note:</strong> macOS restricts launchd access to certain folders (like Documents). Running the bot from <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">~/Projects/</code> avoids permission errors.
@@ -666,11 +668,12 @@
                     <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">The repo's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">bot.py</code> already handles:</p>
                     <ul class="checklist space-y-2 text-[0.92rem] text-slate-500 dark:text-slate-400">
                         <li>HTTP Events API via Flask (production-standard, each event is a stateless HTTP POST)</li>
-                        <li>Async processing — responds to Slack within 3 seconds, runs Claude in background</li>
-                        <li>Auth gating — only allowed Slack user IDs can interact</li>
-                        <li>Thread-based conversations with Claude session continuity</li>
-                        <li>Markdown to Slack formatting conversion</li>
-                        <li>File/image attachment handling</li>
+                        <li>One long-lived Claude process per thread — replies stream in as they are written, and the thread keeps its context</li>
+                        <li>Steering — message a thread while it is working and it sees you at the next step; type a bare <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">stop</code> to interrupt it</li>
+                        <li>Auth gating — only allowed Slack user IDs can interact, with permission tiers</li>
+                        <li>Native Slack tables, charts and buttons; a button click comes back to the same session</li>
+                        <li>File/image attachment handling, both ways</li>
+                        <li>A model per channel or DM, changed without a restart</li>
                         <li>Audit logging of every interaction</li>
                     </ul>
                 </div>
@@ -800,12 +803,16 @@
                         <span class="comment"># Verify it's running</span><br>
                         <span class="cmd">launchctl</span> list | <span class="cmd">grep</span> homebase<br>
                         <span class="cmd">curl</span> <span class="flag">-s</span> http://localhost:3000/health<br><br>
-                        <span class="comment"># Test crash recovery — kill it, watch launchd bring it back</span><br>
-                        <span class="cmd">kill</span> $(pgrep -f bot.py)<br>
-                        <span class="cmd">sleep</span> 3 && <span class="cmd">pgrep</span> <span class="flag">-f</span> bot.py<br><br>
+                        <span class="comment"># Test a restart — launchd stops it and starts it again at once</span><br>
+                        <span class="cmd">launchctl</span> kickstart <span class="flag">-k</span> gui/$(id -u)/com.claude.homebase<br>
+                        <span class="cmd">sleep</span> 3 && <span class="cmd">curl</span> <span class="flag">-s</span> http://localhost:3000/health<br><br>
                         <span class="comment"># Test reboot survival</span><br>
                         <span class="cmd">sudo</span> reboot<br>
                         <span class="comment"># Wait 2-3 min, then DM the bot in Slack</span>
+                    </div>
+
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
+                        <strong class="text-amber-800 dark:text-amber-400">Always restart with kickstart.</strong> Do not <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">kill</code> the bot and wait for launchd to bring it back. With the lid closed and the display off, launchd can hold a crashed service for many minutes before it restarts it. <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">kickstart -k</code> is never deferred.
                     </div>
 
                     <div class="mt-4 bg-green-50 dark:bg-green-950/30 border border-green-100 dark:border-green-900 rounded-xl p-4 text-[0.92rem] text-green-800 dark:text-green-300">
@@ -883,10 +890,131 @@
             </div>
         </section>
 
-        <!-- Phase 5: Using It -->
-        <section class="pb-16">
+        <!-- Phase 5: File explorer -->
+        <section class="pb-16" id="file-explorer">
             <div class="flex items-center gap-3 mb-2">
                 <span class="text-xs font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500">Phase 5</span>
+            </div>
+            <h2 class="text-2xl font-bold mb-2">Give it a window</h2>
+            <p class="text-slate-500 dark:text-slate-400 mb-8">Slack is good for talking. It is a poor place to read a ten-page plan or review a web page your AI just built. The file explorer is a small website on your Mac for exactly that. ~10 minutes.</p>
+
+            <div class="space-y-6">
+
+                <div class="grid sm:grid-cols-3 gap-3 text-[0.88rem]">
+                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                        <div class="font-semibold mb-1">Read</div>
+                        <p class="text-slate-500 dark:text-slate-400">Browse the Mac's files from your phone or laptop. Markdown renders as a document, HTML as a page, code with highlighting.</p>
+                    </div>
+                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                        <div class="font-semibold mb-1">Comment</div>
+                        <p class="text-slate-500 dark:text-slate-400">Select text in a markdown file, or click an element on an HTML page, and leave a note. Then tell your AI to address the comments.</p>
+                    </div>
+                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                        <div class="font-semibold mb-1">Watch</div>
+                        <p class="text-slate-500 dark:text-slate-400">Every conversation it has had, every scheduled job and when it last ran, and which model answers in which Slack room.</p>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">1. Try it</h3>
+                    <div class="code-block">
+                        <span class="cmd">cd</span> ~/Projects/slack-bot<br>
+                        venv/bin/<span class="cmd">pip install</span> waitress<br><br>
+                        <span class="cmd">FILE_EXPLORER_NAME</span>=<span class="string">"Jarvis"</span> venv/bin/python misc/file-explorer/server.py<br><br>
+                        <span class="comment"># From any device on your tailnet, open:</span><br>
+                        <span class="string">http://your-mac:8888</span>
+                    </div>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
+                        <strong class="text-blue-800 dark:text-blue-400">Tailscale only.</strong> It serves your whole home directory with no login, so it answers only the Mac itself and devices on your tailnet. Everyone else gets a 403, including people on your home Wi-Fi.
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">2. Tell it who you are</h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">The conversations, tasks and models pages are for supervisors only, and it knows a supervisor by their device's Tailscale address. Until you add yours, those pages are hidden. On your laptop, run <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">tailscale ip -4</code>, then edit the <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">TAILSCALE_USERS</code> block near the top of <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">misc/file-explorer/server.py</code>:</p>
+                    <div class="code-block">
+                        TAILSCALE_USERS = {<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"100.101.102.103"</span>: {<span class="string">"name"</span>: <span class="string">"You"</span>, <span class="string">"ring"</span>: <span class="flag">1</span>},&nbsp;&nbsp;<span class="comment"># your laptop: supervisor</span><br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"100.104.105.106"</span>: {<span class="string">"name"</span>: <span class="string">"You (phone)"</span>, <span class="string">"ring"</span>: <span class="flag">1</span>},<br>
+                        }
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">3. Keep it running</h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">Same pattern as the bot. Replace <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">YOUR_USERNAME</code> and the names:</p>
+                    <div class="code-block text-[0.72rem]">
+                        <span class="cmd">cat</span> &lt;&lt;'EOF' &gt; ~/Library/LaunchAgents/com.claude.file-explorer.plist<br>
+                        <span class="string">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span><br>
+                        <span class="string">&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"</span><br>
+                        <span class="string">  "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;</span><br>
+                        <span class="string">&lt;plist version="1.0"&gt;</span><br>
+                        <span class="string">&lt;dict&gt;</span><br>
+                        <span class="string">    &lt;key&gt;Label&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;com.claude.file-explorer&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;key&gt;ProgramArguments&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;array&gt;</span><br>
+                        <span class="string">        &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/venv/bin/python&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/misc/file-explorer/server.py&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;/array&gt;</span><br>
+                        <span class="string">    &lt;key&gt;WorkingDirectory&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;/Users/YOUR_USERNAME&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;key&gt;EnvironmentVariables&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;dict&gt;</span><br>
+                        <span class="string">        &lt;key&gt;PATH&lt;/key&gt;</span><br>
+                        <span class="string">        &lt;string&gt;/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_NAME&lt;/key&gt;&lt;string&gt;Jarvis&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_TASK_PREFIXES&lt;/key&gt;&lt;string&gt;com.claude.&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_COMMENT_AUTHORS&lt;/key&gt;&lt;string&gt;You&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_DM_USERS&lt;/key&gt;&lt;string&gt;U0YOURSLACKID:You&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;/dict&gt;</span><br>
+                        <span class="string">    &lt;key&gt;RunAtLoad&lt;/key&gt;&lt;true/&gt;</span><br>
+                        <span class="string">    &lt;key&gt;KeepAlive&lt;/key&gt;&lt;true/&gt;</span><br>
+                        <span class="string">    &lt;key&gt;StandardOutPath&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/file-explorer.log&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;key&gt;StandardErrorPath&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/file-explorer-stderr.log&lt;/string&gt;</span><br>
+                        <span class="string">&lt;/dict&gt;</span><br>
+                        <span class="string">&lt;/plist&gt;</span><br>
+                        EOF<br><br>
+                        <span class="cmd">launchctl</span> load ~/Library/LaunchAgents/com.claude.file-explorer.plist<br>
+                        <span class="cmd">curl</span> <span class="flag">-s -o /dev/null -w</span> <span class="string">"%{http_code}\n"</span> http://localhost:8888/&nbsp;&nbsp;<span class="comment"># 302 means it is up</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">Every setting is listed in <a href="https://github.com/nityeshaga/claude-home-base/blob/main/misc/file-explorer/README.md" class="text-blue-600 hover:underline" target="_blank">the file explorer's README</a>.</p>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">4. Comment on its work</h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">This is the part that changes how you work with it. Reviewing in Slack means retyping what you are pointing at. Here you point.</p>
+                    <div class="bg-slate-50 dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800">
+                        <div class="grid sm:grid-cols-4 gap-3 text-xs text-center items-stretch">
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">1. It writes</div>
+                                <div class="text-slate-400 dark:text-slate-500">a plan in markdown, or a page in HTML, and sends you the link</div>
+                            </div>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">2. You point</div>
+                                <div class="text-slate-400 dark:text-slate-500">select a sentence, or hit <strong>Comment</strong> and click an element, and type a note</div>
+                            </div>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">3. You say</div>
+                                <div class="text-slate-400 dark:text-slate-500">"address the comments on the plan" in Slack</div>
+                            </div>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">4. It resolves</div>
+                                <div class="text-slate-400 dark:text-slate-500">reads each note, makes the change, and marks the note resolved</div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">Notes are stored next to the file in <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">&lt;file&gt;.comments.json</code>; the file itself is never touched. The starter <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">CLAUDE.md</code> already tells your AI how to fetch and resolve them.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Phase 6: Using It -->
+        <section class="pb-16">
+            <div class="flex items-center gap-3 mb-2">
+                <span class="text-xs font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500">Phase 6</span>
             </div>
             <h2 class="text-2xl font-bold mb-2">Using your AI cofounder</h2>
             <p class="text-slate-500 dark:text-slate-400 mb-8">How you interact with it day-to-day.</p>
@@ -952,11 +1080,11 @@
                             </tr>
                             <tr class="border-b border-slate-100 dark:border-slate-800">
                                 <td class="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap">SSH (anywhere)</td>
-                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">ssh YOUR_USERNAME@100.x.x.x</code></td>
+                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">ssh YOUR_USERNAME@your-mac</code></td>
                             </tr>
                             <tr class="border-b border-slate-100 dark:border-slate-800">
                                 <td class="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap">Screen Sharing</td>
-                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">vnc://100.x.x.x</code></td>
+                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">vnc://your-mac</code></td>
                             </tr>
                             <tr class="border-b border-slate-100 dark:border-slate-800">
                                 <td class="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap">Claude Code</td>
@@ -984,7 +1112,7 @@
                 <div class="code-block text-[0.78rem]">
                     <span class="comment"># SSH in — at home (local) or anywhere (Tailscale)</span><br>
                     <span class="cmd">ssh</span> YOUR_USERNAME@your-mac.local  <span class="comment"># at home</span><br>
-                    <span class="cmd">ssh</span> YOUR_USERNAME@100.x.x.x       <span class="comment"># from anywhere via Tailscale</span><br><br>
+                    <span class="cmd">ssh</span> YOUR_USERNAME@your-mac        <span class="comment"># from anywhere, by its Tailscale name</span><br><br>
 
                     <span class="comment"># Check bot status</span><br>
                     <span class="cmd">launchctl</span> list | <span class="cmd">grep</span> homebase<br>
@@ -994,8 +1122,7 @@
                     <span class="cmd">tail</span> <span class="flag">-f</span> ~/Projects/slack-bot/bot.log<br><br>
 
                     <span class="comment"># Restart the bot</span><br>
-                    <span class="cmd">launchctl</span> unload ~/Library/LaunchAgents/com.claude.homebase.plist<br>
-                    <span class="cmd">launchctl</span> load ~/Library/LaunchAgents/com.claude.homebase.plist<br><br>
+                    <span class="cmd">launchctl</span> kickstart <span class="flag">-k</span> gui/$(id -u)/com.claude.homebase<br><br>
 
                     <span class="comment"># Pull latest code</span><br>
                     <span class="cmd">cd</span> ~/Projects/your-product && <span class="cmd">git</span> pull<br><br>
@@ -1007,7 +1134,7 @@
 
                     <span class="comment"># Full desktop access (home or via Tailscale)</span><br>
                     <span class="comment"># Finder &rarr; Go &rarr; Connect to Server &rarr; vnc://your-mac.local (home)</span><br>
-                    <span class="comment"># Finder &rarr; Go &rarr; Connect to Server &rarr; vnc://100.x.x.x (anywhere)</span><br><br>
+                    <span class="comment"># Finder &rarr; Go &rarr; Connect to Server &rarr; vnc://your-mac (anywhere, by its Tailscale name)</span><br><br>
 
                     <span class="comment"># Or just walk over and open the lid :)</span>
                 </div>
@@ -1070,30 +1197,163 @@
                     <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">Open Claude Code on your Mac and paste this:</p>
                     <div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-5 text-[0.92rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
                         <p class="italic leading-relaxed">
-                            Clone <a href="https://github.com/nityeshaga/claude-home-base" class="text-blue-600 hover:underline" target="_blank">https://github.com/nityeshaga/claude-home-base</a> to ~/claude-home-base. Copy CLAUDE.md.example to ~/CLAUDE.md. Install the plugin marketplace from the repo. Enable all plugins (coding, creative, more-ai and chief-of-staff).
+                            The claude-home-base repo is already cloned at ~/Projects/slack-bot, where the Slack bot runs. Make ~/claude-home-base a symlink to it, so the paths in its READMEs work. Do not clone it a second time.
                         </p>
                         <p class="italic leading-relaxed mt-3">
-                            Then set up identity.md and about-you-and-how-you-came-to-life.md in my home directory. Before you write them, ask me:
+                            From that repo: copy CLAUDE.md.example to ~/CLAUDE.md, and make ~/AGENTS.md a symlink to it. Copy identity.md and about-you-and-how-you-came-to-life.md to my home directory. Merge settings.json.example into ~/.claude/settings.json, replacing YOUR_USERNAME and YOUR_ORG, and keeping anything already there. Install the plugin marketplace from the repo and enable all four plugins: coding, creative, more-ai and chief-of-staff. Create ~/projects, ~/work, ~/diary, ~/bookmarks and ~/discoveries.
+                        </p>
+                        <p class="italic leading-relaxed mt-3">
+                            Before you write anything about yourself, ask me:
                         </p>
                         <ul class="mt-2 space-y-1 list-disc list-inside italic">
                             <li>What should I call you? (my name)</li>
                             <li>Why did you bring me to life? (what I'm here to do)</li>
                             <li>How do you want me to behave? (my personality and style)</li>
+                            <li>Who is on the team, and what are their Slack user IDs?</li>
                         </ul>
                         <p class="italic leading-relaxed mt-3">
-                            Then customize CLAUDE.md with my details — fill in the team section, Slack user IDs, workspace paths, product description, and environment. After that, write my identity.md — who I am, in my own voice. And write my origin story.
+                            Then fill in every placeholder in ~/CLAUDE.md: my name, the team, Slack user IDs, this Mac's Tailscale name, and the environment. Delete every section about something that is not installed on this machine; the comments in the file say which ones are optional. Write my identity.md — who I am, in my own voice. And write my origin story.
+                        </p>
+                        <p class="italic leading-relaxed mt-3">
+                            Finish by checking your own work: confirm each file exists where it should, that the plugins show as enabled, and that the bot answers at localhost:3000/health. Tell me what you set up, what you skipped, and anything that failed.
                         </p>
                     </div>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
-                        <strong class="text-blue-800 dark:text-blue-400">What happens:</strong> Claude clones the repo, copies starter files, installs the plugin marketplace with inbox management and brainstorming skills, asks you a few questions, then writes its own identity and origin story. You watch your AI cofounder come alive.
+                        <strong class="text-blue-800 dark:text-blue-400">What happens:</strong> Claude copies the starter files into place, sets up its settings and plugins, asks you a few questions, writes its own identity and origin story, then checks its work and reports. You watch your AI cofounder come alive.
                     </div>
                 </div>
 
                 <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white">
                     <h3 class="font-bold mb-2">That's it. It's alive.</h3>
                     <p class="text-slate-300 text-[0.92rem] leading-relaxed">
-                        Your AI cofounder now has a CLAUDE.md (its operations manual), an identity (its soul), an origin story (its history), and skills (inbox management, brainstorming, image generation). It knows who you are, what the product is, and how to reach you on Slack. From here, everything compounds — every conversation makes it smarter, every correction refines its preferences, every day it understands the business better.
+                        Your AI cofounder now has a CLAUDE.md (its operations manual), an identity (its soul), an origin story (its history), and skills (briefings, creative direction, brainstorming, image generation). It knows who you are, what the product is, and how to reach you on Slack. From here, everything compounds — every conversation makes it smarter, every correction refines its preferences, every day it understands the business better.
                     </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Add-ons -->
+        <section class="pb-16" id="add-ons">
+            <div class="flex items-center gap-3 mb-2">
+                <span class="text-xs font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500">Add-ons</span>
+            </div>
+            <h2 class="text-2xl font-bold mb-2">More ways in, and a longer memory</h2>
+            <p class="text-slate-500 dark:text-slate-400 mb-8">Everything below ships in the repo you already cloned. Each piece is optional and independent. Add one when you feel the lack of it, not before.</p>
+
+            <div class="bg-slate-50 dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800 mb-8">
+                <div class="grid grid-cols-3 gap-3 text-xs text-center">
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-3"><div class="font-semibold text-blue-800 text-sm">Type</div><div class="text-blue-600">Slack</div></div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-3"><div class="font-semibold text-blue-800 text-sm">Talk</div><div class="text-blue-600">a call from your phone</div></div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-3"><div class="font-semibold text-blue-800 text-sm">Tap</div><div class="text-blue-600">a page in your browser</div></div>
+                </div>
+                <div class="grid grid-cols-3 gap-3"><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg></div>
+                <div class="grid grid-cols-3 gap-3 text-xs text-center">
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3"><div class="font-semibold text-sm">Slack bot</div><div class="text-slate-400 dark:text-slate-500">port 3000, behind the tunnel</div></div>
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3"><div class="font-semibold text-sm">Voice bridge</div><div class="text-slate-400 dark:text-slate-500">port 9443, tailnet only</div></div>
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3"><div class="font-semibold text-sm">Notepad &amp; file explorer</div><div class="text-slate-400 dark:text-slate-500">ports 8950 and 8888, tailnet only</div></div>
+                </div>
+                <div class="grid grid-cols-3 gap-3"><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg></div>
+                <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-5 text-white text-center">
+                    <div class="font-bold">The same Claude sessions</div>
+                    <div class="text-slate-400 text-xs mt-1">A call opens a Slack thread. A tap on the notepad opens a Slack thread. Reply in the thread and you are talking to the session that did the work.</div>
+                    <div class="grid grid-cols-3 gap-2 text-xs mt-4">
+                        <div class="bg-slate-700/50 rounded-lg px-3 py-2">Search <span class="text-slate-500">recall</span></div>
+                        <div class="bg-slate-700/50 rounded-lg px-3 py-2">Diary <span class="text-slate-500">nightly</span></div>
+                        <div class="bg-slate-700/50 rounded-lg px-3 py-2">Trust battery <span class="text-slate-500">nightly</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="space-y-4">
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="notepad">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Notepad</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">page on port 8950</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">A short list, per person, of what needs you. Your AI can only add an item if someone is waiting on you and there is one thing you could do about it, so the list stays short. Open the page, see who is waiting, tap once: the tap starts a session in Slack with that item's instruction. Tell it "stop bringing this up" and the topic is closed for good.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Install the notepad from ~/claude-home-base/notepad by following its README and page/README. Ask me who needs a notepad. Put the notepad command on my PATH, run its tests, and give the page a launchd job. Then add a first item for me so I can see it.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/notepad/README.md" class="text-blue-600 hover:underline" target="_blank">Notepad README</a> &middot; <a href="https://github.com/nityeshaga/claude-home-base/blob/main/notepad/page/README.md" class="text-blue-600 hover:underline" target="_blank">Page README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="voice">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Voice calls</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">page on port 9443 · about $0.05 a minute</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Call your AI and talk. A voice model does the speaking and listening; anything of substance goes to a fresh Claude session with all the usual tools. Every call opens a Slack thread where the transcript and anything visual lands, and replying there afterwards continues the same session. It needs an OpenAI API key with access to the live voice model.</p>
+                    <div class="code-block mt-3">
+                        <span class="cmd">cd</span> ~/claude-home-base/voice-bridge<br>
+                        <span class="cmd">python3</span> <span class="flag">-m</span> venv venv &amp;&amp; venv/bin/<span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt<br><br>
+                        <span class="cmd">cp</span> .env.example .env&nbsp;&nbsp;<span class="comment"># OPENAI_API_KEY, and VOICE_AGENT_NAME</span><br>
+                        <span class="cmd">cp</span> callers.json.example callers.json&nbsp;&nbsp;<span class="comment"># your Slack user ID and first name</span><br><br>
+                        <span class="comment"># Browsers only give a page the microphone over https, so make a certificate</span><br>
+                        <span class="cmd">mkdir</span> certs &amp;&amp; <span class="cmd">openssl</span> req <span class="flag">-x509 -newkey</span> rsa:2048 <span class="flag">-nodes -days</span> 3650 \<br>
+                        &nbsp;&nbsp;<span class="flag">-keyout</span> certs/key.pem <span class="flag">-out</span> certs/cert.pem <span class="flag">-subj</span> <span class="string">"/CN=$(hostname)"</span><br><br>
+                        venv/bin/python bridge.py<br>
+                        <span class="comment"># On your phone, on your tailnet, open:</span><br>
+                        <span class="string">https://your-mac:9443</span>
+                    </div>
+                    <ul class="checklist space-y-2 text-[0.92rem] text-slate-500 dark:text-slate-400 mt-3">
+                        <li>Accept the certificate warning once on each device</li>
+                        <li>Tap the lamp, allow the microphone, and say hello</li>
+                        <li>Check that a thread opened in your Slack DM with the transcript</li>
+                        <li>Make it a service with the plist and wrapper in <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">voice-bridge/launchd/</code></li>
+                    </ul>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
+                        <strong class="text-blue-800 dark:text-blue-400">On a call it must behave differently.</strong> The starter <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">CLAUDE.md</code> has a Voice calls section: write for the ear, post visuals to the thread, and get a spoken yes before any outward action. Keep that section. Speech is mis-heard more often than text is mistyped.
+                    </div>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
+                        <strong class="text-amber-800 dark:text-amber-400">Calls from the lock screen.</strong> A phone suspends a web page when it locks. The optional Telegram front door fixes that: you place an ordinary Telegram call and it works locked, with earbuds, in the car. It signs in as a Telegram <em>user</em> account, not a bot, so read the caveat in the README before you set it up, and use a spare number.
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/voice-bridge/README.md" class="text-blue-600 hover:underline" target="_blank">Voice bridge README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="search">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Search</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">needs Python 3.12+</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Keyword and meaning-based search over your AI's files and every past conversation, in one small local database. It is how "what did we decide about pricing in March?" gets a real answer instead of a guess.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Set up search from ~/claude-home-base/search by following its README. Index my projects, diary and conversation logs. Add a launchd job that re-indexes every night at 4am, and show me one search working.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/search/README.md" class="text-blue-600 hover:underline" target="_blank">Search README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="diary">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Daily diary</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">nightly job</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Each night it reads the day's conversations and writes a diary entry: what happened, what it got wrong, what it learned. Over months this is where its judgment comes from, and it is the only job that may edit its own identity.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Install the daily diary job from ~/claude-home-base/jobs/daily-diary by following jobs/README.md. Show me the prompt and wait for my yes before you schedule it.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/jobs/README.md" class="text-blue-600 hover:underline" target="_blank">Jobs README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="trust-battery">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Trust battery</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">two nightly jobs</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">A 0–100 charge per person that sets how much your AI does without asking. A judge reads each day's conversations and moves the charge; below 25% it proposes and waits, above 75% it acts and reports. It turns "I wish it would just do it" and "I wish it had asked" into something that adjusts itself.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Set up the trust battery from ~/claude-home-base/trust-battery by following its README. Start everyone at 20%. Show me both prompts before you schedule anything.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/trust-battery/README.md" class="text-blue-600 hover:underline" target="_blank">Trust battery README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="standing-rules">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Standing rules</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">one line in .env</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">When you have told it the same thing three times, a note is not going to fix it. Set <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">STANDING_RULES_DIR</code> in the bot's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">.env</code>, and put the rule, in your own words, in a file named after your Slack user ID. The bot adds it to every session you start and repeats it every few messages, so it holds through a long thread.</p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="codex">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">A second engine</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">optional</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Any channel can be answered by OpenAI's Codex instead of Claude: pick a <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">gpt-*</code> model for that room on the file explorer's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">/models</code> page. Same Slack experience, including stop and steering. Useful for comparing the two on the same task. Codex rooms read <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">AGENTS.md</code>, which the starter prompt already linked to your <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">CLAUDE.md</code>.</p>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/README.md#codex-backend-optional" class="text-blue-600 hover:underline" target="_blank">Codex backend, in the README</a></p>
                 </div>
             </div>
         </section>
