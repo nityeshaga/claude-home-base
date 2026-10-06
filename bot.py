@@ -1825,7 +1825,25 @@ def process_message_async(event: dict) -> None:
             codex_session = _get_or_create_codex_session(
                 thread_ts=thread_ts, channel=channel, user_id=user_id, on_text=on_text,
             )
+            # Mid-turn steering, mirroring the Claude path: send_to_codex
+            # steers the running turn (turn/steer) and returns at once; the
+            # running turn's on_text keeps posting here. Its eyes reaction is
+            # drained when that turn ends.
+            if codex_session.turn_lock.locked():
+                bot_codex.send_to_codex(codex_session, text)
+                codex_session.pending_reactions.append((reaction_channel, reaction_msg_ts))
+                audit_interaction(event, "(steered into running turn)", 0.0,
+                                  codex_session.codex_thread_id or "")
+                logger.info(f"Steering message injected mid-turn in Codex thread {thread_ts}")
+                return
+            codex_session._on_text = on_text
             bot_codex.send_to_codex(codex_session, text)
+            while codex_session.pending_reactions:
+                ch, ts = codex_session.pending_reactions.pop(0)
+                try:
+                    slack_client.reactions_remove(channel=ch, name="eyes", timestamp=ts)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Codex backend error in thread {thread_ts}: {e}")
             try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
@@ -1997,6 +2015,25 @@ def _maybe_stop_from_message(event: dict) -> bool:
     if text not in ("stop", "esc"):
         return False
     thread_ts = event.get("thread_ts") or event.get("ts")
+    with _codex_sessions_lock:
+        codex_session = _codex_sessions.get(thread_ts)
+    if codex_session and codex_session.proc.poll() is None and codex_session.turn_lock.locked():
+        def _do_codex_stop():
+            clean = bot_codex.interrupt(codex_session)
+            note = ("stopped mid-run — tell me where to go instead" if clean
+                    else "interrupt didn't land — the turn is still running; it will time out on its own")
+            try:
+                slack_client.chat_postMessage(
+                    channel=codex_session.channel, thread_ts=codex_session.thread_ts,
+                    text=f"Stopped: {note}",
+                    blocks=[{"type": "context", "elements": [
+                        {"type": "mrkdwn", "text": f":octagonal_sign: _{note}_"}]}],
+                )
+            except Exception:
+                pass
+        threading.Thread(target=_do_codex_stop, daemon=True).start()
+        return True
+
     with _live_sessions_lock:
         session = _live_sessions.get(thread_ts)
     if not session or session.proc.poll() is not None or not session.turn_lock.locked():

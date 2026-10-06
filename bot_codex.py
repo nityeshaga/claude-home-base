@@ -66,6 +66,8 @@ class CodexSession:
     last_activity: float = field(default_factory=time.time)
     _on_text: Optional[Callable[[str], None]] = field(default=None, repr=False)
     _on_status: Optional[Callable[[str], None]] = field(default=None, repr=False)
+    # Eyes reactions from mid-turn steering messages; the caller drains them when the turn ends.
+    pending_reactions: list = field(default_factory=list)
     _next_id: int = 100
     _id_lock: threading.Lock = field(default_factory=threading.Lock)
     _pending: dict = field(default_factory=dict)
@@ -184,31 +186,50 @@ def send_to_codex(session: CodexSession, text: str) -> None:
     If a turn is in flight, use turn/steer. Otherwise, turn/start.
     Blocks until the turn completes (turn_done event set).
     """
+    params_input = [{"type": "text", "text": text}]
+
+    # A turn is in flight (the lock is held by the caller waiting on it): steer
+    # it instead of queueing behind it. Must NOT take turn_lock here — the
+    # holder is blocked in _turn_done.wait, so waiting on the lock would be
+    # a deadlock-shaped queue, and the steer would land only after the turn
+    # it meant to steer had already finished.
+    if session.turn_lock.locked() and session.current_turn_id:
+        session.last_activity = time.time()
+        _rpc_request(session, "turn/steer", {
+            "threadId": session.codex_thread_id,
+            "expectedTurnId": session.current_turn_id,
+            "input": params_input,
+        })
+        return
+
     with session.turn_lock:
         session.last_activity = time.time()
         session._turn_done.clear()
         session._agent_buffer = []
-        params_input = [{"type": "text", "text": text}]
-
-        if session.current_turn_id:
-            # Mid-turn steer
-            _rpc_request(session, "turn/steer", {
-                "threadId": session.codex_thread_id,
-                "expectedTurnId": session.current_turn_id,
-                "input": params_input,
-            })
-        else:
-            resp = _rpc_request(session, "turn/start", {
-                "threadId": session.codex_thread_id,
-                "input": params_input,
-            })
-            if resp and "result" in resp:
-                session.current_turn_id = resp["result"].get("turn", {}).get("id")
+        params = {"threadId": session.codex_thread_id, "input": params_input}
+        resp = _rpc_request(session, "turn/start", params)
+        if resp and "result" in resp:
+            session.current_turn_id = resp["result"].get("turn", {}).get("id")
 
         if not session._turn_done.wait(timeout=TURN_TIMEOUT):
             logger.error(f"Codex turn timed out after {TURN_TIMEOUT}s in thread {session.thread_ts}")
+            # Abort the turn so the thread is consistent: otherwise the lock is
+            # released while Codex is still mid-turn and the next message's
+            # turn/start collides with it.
+            interrupt(session)
             if session._on_text:
-                session._on_text(f":warning: Codex turn timed out after {TURN_TIMEOUT//60}min")
+                session._on_text(f":warning: stopped after {TURN_TIMEOUT//60} min (bot-side turn limit); "
+                                 f"the thread resumes on your next message")
+
+
+def interrupt(session: CodexSession) -> bool:
+    """Abort the running turn (turn/interrupt — Codex's Esc). True if the turn
+    ended within a few seconds; the thread stays resumable either way."""
+    tid = session.current_turn_id
+    if not tid:
+        return True
+    _rpc_request(session, "turn/interrupt", {"threadId": session.codex_thread_id, "turnId": tid})
+    return session._turn_done.wait(timeout=5)
 
 
 def shutdown(session: CodexSession) -> None:
@@ -319,7 +340,8 @@ def _dispatch(session: CodexSession, data: dict) -> None:
         elif itype in ("commandExecution", "fileChange", "reasoning") and session._on_status:
             session._on_status(itype)
     elif method == "turn/started":
-        tid = params.get("turnId") or params.get("id")
+        turn = params.get("turn") or {}
+        tid = turn.get("id") or params.get("turnId") or params.get("id")
         if tid:
             session.current_turn_id = tid
     elif method == "turn/completed":
