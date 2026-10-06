@@ -33,6 +33,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2323,6 +2324,158 @@ def slack_events():
 @flask_app.route("/slack/actions", methods=["POST"])
 def slack_actions():
     return handler.handle(request)
+
+
+# ---------------------------------------------------------------------------
+# Notepad: a tap on the notepad page starts or resumes a session in a thread.
+# See notepad/page/README.md for the request contract.
+# ---------------------------------------------------------------------------
+
+_ACT_SESSION_RE = re.compile(r"^[0-9a-fA-F][0-9a-fA-F-]{35}\Z")
+_ACT_TS_RE = re.compile(r"^\d{9,}\.\d{1,9}\Z")
+_ACT_CHANNEL_RE = re.compile(r"^[CDG][A-Z0-9]{6,}\Z")
+ACT_NOTEPAD_SENTENCE = (
+    "When you finish or get blocked, run `notepad update {item_id} --standing "
+    "\"<one line on where this stands>\"`. If the work fully resolves the item, run "
+    "`notepad done {item_id} --how handled --why \"<one line>\"`."
+)
+
+
+def _slack_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _act_validate(data) -> str | None:
+    """Return the reason the request is bad, or None."""
+    if not isinstance(data, dict):
+        return "body must be a JSON object"
+    user_id = data.get("user_id")
+    if not isinstance(user_id, str) or not user_id:
+        return "user_id is required"
+    item_id = data.get("item_id")
+    if not isinstance(item_id, int) or isinstance(item_id, bool) or item_id <= 0:
+        return "item_id must be a positive integer"
+    instruction = data.get("instruction")
+    if not isinstance(instruction, str) or not instruction.strip():
+        return "instruction is required"
+    if len(instruction) > 20000:
+        return "instruction is longer than 20000 characters"
+    for key in ("fork", "dry_run"):
+        if data.get(key) is not None and not isinstance(data.get(key), bool):
+            return f"{key} must be true or false"
+    thread_ts, channel = data.get("thread_ts"), data.get("channel")
+    session_id = data.get("session_id")
+    if thread_ts and not channel:
+        return "thread_ts needs channel"
+    if thread_ts and not (isinstance(thread_ts, str) and _ACT_TS_RE.match(thread_ts)):
+        return "thread_ts is not a Slack timestamp"
+    if channel and not (isinstance(channel, str) and _ACT_CHANNEL_RE.match(channel)):
+        return "channel is not a Slack channel ID"
+    if session_id and not (isinstance(session_id, str) and _ACT_SESSION_RE.match(session_id)):
+        return "session_id is not a Claude session ID"
+    if data.get("fork") and not session_id:
+        return "fork=true needs session_id"
+    if not thread_ts:
+        anchor_text = data.get("anchor_text")
+        if not isinstance(anchor_text, str) or not anchor_text.strip():
+            return "anchor_text is required for a new thread"
+    return None
+
+
+@flask_app.route("/notepad/act", methods=["POST"])
+def notepad_act():
+    """Start or resume a Claude session in a Slack thread for one notepad item. Localhost-only."""
+    if not _is_direct_local_request():
+        return jsonify({"ok": False, "error": "localhost only"}), 403
+
+    data = request.get_json(force=True, silent=True)
+    reason = _act_validate(data)
+    if reason:
+        return jsonify({"ok": False, "error": reason}), 400
+    user_id = data["user_id"]
+    if not is_authorized(user_id):
+        return jsonify({"ok": False, "error": "user not authorized"}), 403
+
+    item_id = data["item_id"]
+    instruction = data["instruction"].strip()
+    thread_ts = data.get("thread_ts") or None
+    channel = (data.get("channel") or None) if thread_ts else None  # new thread: always their DM
+    session_id = data.get("session_id") or None
+    fork = bool(data.get("fork"))
+    mode = "resumed" if thread_ts else "new"
+
+    if data.get("dry_run"):
+        return jsonify({"ok": True, "dry_run": True, "mode": mode,
+                        "channel": channel, "thread_ts": thread_ts})
+
+    name = _get_user_name(user_id)
+    session_text = (
+        f"[Notepad tap for {BOT_DISPLAY_NAME}: {name} tapped item {item_id} on the "
+        f"notepad page]\n"
+        f"Item: {item_id}\n"
+        f"Instruction: {instruction}\n\n"
+        + ACT_NOTEPAD_SENTENCE.format(item_id=item_id)
+    )
+    fork_from = None
+    try:
+        if not thread_ts:
+            anchor_text = data["anchor_text"].strip()
+            channel = slack_client.conversations_open(users=user_id)["channel"]["id"]
+            # the page prefixes one context line; the anchor already shows the item
+            short = instruction.split("\n\n", 1)[-1]
+            short = short if len(short) <= 280 else short[:277] + "..."
+            anchor = slack_client.chat_postMessage(
+                channel=channel,
+                text=f"Notepad, item {item_id}: {anchor_text}",
+                blocks=[{"type": "context", "elements": [
+                    {"type": "mrkdwn", "text": f":dart: *Notepad* · item {item_id} · "
+                                               f"{_slack_escape(anchor_text)}"},
+                    {"type": "mrkdwn", "text": f"_{_slack_escape(short)}_"},
+                ]}],
+                unfurl_links=False, unfurl_media=False,
+            )
+            thread_ts = msg_ts = anchor["ts"]
+            if session_id and fork:
+                fork_from = session_id
+            elif session_id:
+                _save_session(thread_ts, session_id)
+        else:
+            with _live_sessions_lock:
+                live = _live_sessions.get(thread_ts)
+                has_live = bool(live and live.proc.poll() is None)
+            if session_id and not has_live and not _get_session(thread_ts):
+                if fork:
+                    fork_from = session_id
+                else:
+                    _save_session(thread_ts, session_id)
+                    logger.info(f"/notepad/act: restored session {session_id} for thread {thread_ts}")
+            posted = slack_client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text=f"From the notepad: {_slack_escape(instruction)}",
+                unfurl_links=False, unfurl_media=False,
+            )
+            msg_ts = posted["ts"]
+    except Exception as e:
+        logger.error(f"/notepad/act: Slack call failed for item {item_id}: {e}")
+        return jsonify({"ok": False, "error": f"slack: {e}"}), 502
+
+    event = {
+        "user": user_id,
+        "channel": channel,
+        "ts": msg_ts,
+        "thread_ts": thread_ts,
+        "text": session_text,
+        # unique per call so a second tap is never dropped as a duplicate
+        "client_msg_id": f"notepad:{item_id}:{uuid.uuid4().hex}",
+        "channel_type": "im" if channel.startswith("D") else "channel",
+    }
+    if fork_from:
+        event["_fork_from"] = fork_from
+    threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
+    logger.info(f"/notepad/act: {mode} item={item_id} thread={thread_ts} "
+                f"channel={channel} session_id={session_id or '-'} fork={fork} "
+                f"fork_from={fork_from or '-'}")
+    return jsonify({"ok": True, "mode": mode, "channel": channel, "thread_ts": thread_ts})
 
 
 @flask_app.route("/health", methods=["GET"])
