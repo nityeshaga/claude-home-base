@@ -38,24 +38,11 @@
       "Agent"
     ]
   },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/YOUR_USERNAME/scripts/block-gws-email-send.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  },
   "enabledPlugins": {
+    "coding@claude-home-base": true,
+    "creative@claude-home-base": true,
     "more-ai@claude-home-base": true,
-    "tactical@claude-home-base": true,
-    "creative@claude-home-base": true
+    "chief-of-staff@claude-home-base": true
   },
   "extraKnownMarketplaces": {
     "claude-home-base": {

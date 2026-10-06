@@ -2054,6 +2054,18 @@ def health():
     return jsonify({"status": "ok", "bot": "ai-employee"})
 
 
+def _is_direct_local_request() -> bool:
+    """Localhost, and not relayed by the Cloudflare tunnel.
+
+    cloudflared forwards public traffic to this port from localhost, so
+    remote_addr alone lets the internet through. cloudflared always stamps
+    these headers; a direct local caller never sends them.
+    """
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return False
+    return not any(h in request.headers for h in ("Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For"))
+
+
 @flask_app.route("/internal/forward", methods=["POST"])
 def register_forward_endpoint():
     """Register a cross-thread forward. Called by `bot.py --send --forward-to`.
@@ -2062,7 +2074,7 @@ def register_forward_endpoint():
     the target thread's live session for channel + session_id + user_id and
     persists the forward to .forwards.json.
     """
-    if request.remote_addr not in ("127.0.0.1", "::1"):
+    if not _is_direct_local_request():
         return jsonify({"error": "forbidden"}), 403
     data = request.get_json(silent=True) or {}
     from_thread = data.get("from_thread")
