@@ -37,7 +37,13 @@ identity.md             # Your AI's soul (principles + self-authored identity)
 about-you-and-how-you-came-to-life.md  # Origin story template
 .env.example            # Configuration template
 model-config.json.example  # Per-channel/DM model + effort config template
+settings.json.example   # Claude Code settings template (permissions, plugins)
 requirements.txt        # Python dependencies
+
+misc/file-explorer/     # Web file browser: markdown + HTML comments, /models page, task monitor
+search/                 # Hybrid keyword + vector search over local files and conversation logs
+jobs/                   # Scheduled (launchd) jobs, starting with the daily diary
+trust-battery/          # Nightly judge that sets how much autonomy your AI gets per person
 
 plugins/
 ├── coding/             # Precision coding tools
@@ -48,6 +54,8 @@ plugins/
 │       ├── creative-lead/    # Creative direction for any project
 │       ├── explorable-explanations/  # Topic → tree of no-scroll, single-viewport interactive pages
 │       ├── fried-ux-review/  # Adversarial UX review on Jason Fried's obvious / easy / possible rubric
+│       ├── create-zine-comic/  # Comic-book-style zines that explain a concept
+│       ├── demo-video/       # Product demo videos through a gated taste workflow
 │       ├── lets-brainstorm/  # Timed coaching sessions
 │       ├── help-me-write/    # Collaborative writing (keeps your voice)
 │       └── interview-me/     # Timed discovery interviews
@@ -56,12 +64,9 @@ plugins/
 │       ├── gemini-imagegen/
 │       ├── openai-imagegen/
 │       └── gemini-thinking/
-└── experimental/       # Operational workflows, debiasing, prompt engineering
+└── chief-of-staff/     # Inboxes, daily briefs, action tracking
     └── skills/
-        ├── briefing/         # Email, briefs, action tracking
-        ├── are-you-sure/     # Blind debiasing for claims and opinions
-        ├── prompt-engineer/  # AI prompt writing and review
-        └── investigate-yourself/  # Forensic self-diagnosis
+        └── briefing/         # Email triage, brief delivery, notepads
 ```
 
 ## Architecture
