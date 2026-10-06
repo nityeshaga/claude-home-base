@@ -8,7 +8,7 @@ everything else (GPT-Live, Claude, Slack thread).
 Env: TG_API_ID, TG_API_HASH (from https://my.telegram.org), TG_SESSION (default "voice"),
 VOICE_BRIDGE_WS (default wss://127.0.0.1:9443/ws).
 """
-import asyncio, json, logging, os, ssl, time
+import asyncio, json, logging, os, ssl, sys, time
 from pathlib import Path
 
 import websockets
@@ -204,10 +204,34 @@ async def on_msg(_, m):
     if str(m.from_user.id) not in allowlist():
         await m.reply_text("Got it. Your id has been logged; once it is on the allow-list you can call.")
 
+class _NetWatch(logging.Handler):
+    """Pyrogram reconnects after a network drop but then stops delivering incoming calls:
+    it looks connected and a call placed half an hour later never arrives.
+    So a drop followed by a reconnect means: restart this process once no call is live."""
+    dropped = connected = 0.0
+    def emit(self, r):
+        msg = r.getMessage()
+        if r.levelno >= logging.WARNING:
+            _NetWatch.dropped = time.time()
+        elif "Connected!" in msg:
+            _NetWatch.connected = time.time()
+
+async def restart_after_drop():
+    while True:
+        await asyncio.sleep(5)
+        w = _NetWatch
+        if w.dropped and w.connected > w.dropped and not LIVE:
+            log.warning("network dropped at %s and came back; restarting so calls get through",
+                        time.strftime("%H:%M:%S", time.localtime(w.dropped)))
+            # re-exec in place: launchd can defer KeepAlive respawns while the display is off
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
 async def main():
     await tg.start()
     me = await app.get_me()
     log.info("Telegram front door up as %s (%s); allowlist=%s", me.first_name, me.id, allowlist())
+    logging.getLogger("pyrogram.connection").addHandler(_NetWatch())
+    asyncio.create_task(restart_after_drop())
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
