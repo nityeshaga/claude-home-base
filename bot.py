@@ -126,6 +126,17 @@ ALLOWED_CHANNEL_SUBSTRINGS = tuple(
 # Trust battery — optional. Set to a directory containing per-user JSON battery files.
 TRUST_BATTERY_DIR = os.environ.get("TRUST_BATTERY_DIR", "")
 
+# Standing rules — things a person has told the bot more than once. One file
+# per Slack user ID (<USER_ID>.md) plus shared.md for everyone, in this
+# directory. Appended to the system prompt at spawn and re-sent every
+# STANDING_RULES_CADENCE human messages, because a rule stated once at spawn
+# decays over a long thread. Empty dir = disabled; cadence 0 = spawn only.
+STANDING_RULES_DIR = os.environ.get("STANDING_RULES_DIR", "")
+try:
+    STANDING_RULES_CADENCE = max(int(os.environ.get("STANDING_RULES_CADENCE", "6")), 0)
+except ValueError:
+    STANDING_RULES_CADENCE = 6
+
 MAX_SLACK_MSG_LEN = 3900
 PORT = int(os.environ.get("PORT", "3000"))
 
@@ -651,6 +662,27 @@ def _get_trust_battery_context() -> str:
     return "\n".join(lines)
 
 
+def _get_standing_rules(user_id: str) -> str:
+    """The standing rules for this person: their own file, then the shared one."""
+    if not STANDING_RULES_DIR:
+        return ""
+    rules_dir = Path(os.path.expanduser(STANDING_RULES_DIR))
+    parts = []
+    for name in (f"{user_id}.md" if user_id else "", "shared.md"):
+        if not name:
+            continue
+        try:
+            body = (rules_dir / name).read_text().strip()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            logger.warning(f"standing-rules file unreadable: {rules_dir / name}")
+            continue
+        if body:
+            parts.append(body)
+    return "\n\n".join(parts)
+
+
 def _spawn_claude_process(
     session_id: str | None = None,
     user_id: str = "",
@@ -676,8 +708,9 @@ def _spawn_claude_process(
     ]
     if model:
         cmd.extend(["--model", model])
-    if model_prompt:
-        cmd.extend(["--append-system-prompt", model_prompt])
+    appended = "\n\n".join(p for p in (model_prompt, _get_standing_rules(user_id)) if p)
+    if appended:
+        cmd.extend(["--append-system-prompt", appended])
     if user_id in SUPERVISOR_USERS:
         cmd.extend(["--permission-mode", "bypassPermissions"])
     elif user_id in RESTRICTED_USERS:
@@ -986,6 +1019,12 @@ def _send_to_claude(session: LiveSession, text: str) -> None:
         text += f"\n\n[reminder]\n{model_prompt}"
         logger.info(f"Re-injected model prompt at message {session.turns_sent} "
                     f"in thread {session.thread_ts}")
+    if STANDING_RULES_CADENCE and session.turns_sent % STANDING_RULES_CADENCE == 0:
+        rules = _get_standing_rules(session.user_id)
+        if rules:
+            text += f"\n\n[standing rules — still in force]\n{rules}"
+            logger.info(f"Re-injected standing rules at message {session.turns_sent} "
+                        f"in thread {session.thread_ts}")
     msg = json.dumps({
         "type": "user",
         "session_id": "",
