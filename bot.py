@@ -1894,6 +1894,11 @@ def handle_message(event, say):
     if subtype and subtype != "file_share":
         return
 
+    # Other apps' posts arrive with bot_id set and NO subtype — never treat
+    # them as user messages (loop/noise risk)
+    if event.get("bot_id"):
+        return
+
     # Skip @mentions in channels — those are handled by handle_mention() via
     # the app_mention event.  Without this guard, Slack fires BOTH a "message"
     # event and an "app_mention" event for the same message, causing duplicate
