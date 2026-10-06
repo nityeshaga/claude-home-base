@@ -542,6 +542,9 @@ class LiveSession:
     # Messages sent into this process, for the per-model prompt cadence. Resets
     # when the thread's process is respawned after an idle-out.
     turns_sent: int = 0
+    # Set when the human typed `stop` during the current turn. A stopped turn
+    # ends with no text on purpose, so it gets no "no reply" notice.
+    stopped: bool = False
 
 
 # thread_ts → LiveSession
@@ -1710,14 +1713,16 @@ def process_message_async(event: dict) -> None:
     all_texts = []
     first_text_sent = False
     skip_detected = False
+    limit_hit = False
 
     def on_text(text_block: str):
         """Called for each text block Claude produces — post it to Slack immediately."""
-        nonlocal first_text_sent, skip_detected
+        nonlocal first_text_sent, skip_detected, limit_hit
 
         # Usage-limit notices are synthesized by the CLI, not the model.
         # Suppress them; announce the outage once and pause inbound handling.
         if LIMIT_RE.search(text_block):
+            limit_hit = True
             until_epoch = _enter_limit_pause(text_block)
             logger.warning(f"Usage limit hit in thread {thread_ts}: {text_block!r}")
             if until_epoch:
@@ -1798,6 +1803,7 @@ def process_message_async(event: dict) -> None:
         with session.turn_lock:
             session._on_text = on_text
             session._turn_done.clear()
+            session.stopped = False
 
             _send_to_claude(session, text)
 
@@ -1848,6 +1854,22 @@ def process_message_async(event: dict) -> None:
         pass
 
     full_response = "\n\n".join(all_texts)
+
+    # The quiet drop: the turn ends clean, the process is still alive, and
+    # nothing was said. No exception, no timeout — so every guard above stays
+    # silent and the ask evaporates. A turn the human stopped, or one that hit
+    # the usage limit, already got its own notice.
+    if not full_response.strip() and not session.stopped and not limit_hit:
+        logger.error(f"Empty response for {user_id} in {channel} after {duration:.1f}s")
+        try:
+            slack_client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text="That turn ended without producing a reply — nothing was lost, "
+                     "but nothing was answered either. Send it again and I'll pick it up.",
+            )
+        except Exception as e:
+            logger.error(f"Could not post empty-response notice: {e}")
+
     audit_interaction(event, full_response, duration, session.session_id)
 
 
@@ -1858,6 +1880,7 @@ def process_message_async(event: dict) -> None:
 
 def _interrupt_session(session: LiveSession) -> bool:
     """Send the CLI an interrupt (the programmatic Esc). True if the turn ended cleanly."""
+    session.stopped = True
     try:
         payload = json.dumps({"type": "control_request",
                               "request_id": f"interrupt-{int(time.time() * 1000)}",
