@@ -691,8 +691,14 @@ def _spawn_claude_process(
     user_id: str = "",
     thread_ts: str = "",
     channel: str = "",
+    fork: bool = False,
 ) -> subprocess.Popen:
     """Spawn a long-lived Claude CLI process with stream-json I/O.
+
+    fork=True (with session_id) starts a copy of that session under a new ID
+    (--fork-session), leaving the original untouched. Used when the session
+    to continue is shared, e.g. a scheduled job's session behind several
+    notepad items.
 
     Injects CLAUDE_THREAD_TS / CLAUDE_CHANNEL_ID / CLAUDE_SESSION_ID env vars
     so the spawned Claude can read its own routing context (mainly for the
@@ -726,6 +732,8 @@ def _spawn_claude_process(
         cmd.extend(["--permission-mode", "dontAsk"])
     if session_id:
         cmd.extend(["--resume", session_id])
+        if fork:
+            cmd.append("--fork-session")
     # Per-room MCP servers ("mcp_config": path to an mcpServers JSON file). Passed
     # via --mcp-config, it shadows a same-named server from user/project scope
     # and leaves the rest alone — e.g. one person's DM gets their own login to a
@@ -755,8 +763,10 @@ def _spawn_claude_process(
         proc_env["CLAUDE_THREAD_TS"] = thread_ts
     if channel:
         proc_env["CLAUDE_CHANNEL_ID"] = channel
-    if session_id:
-        proc_env["CLAUDE_SESSION_ID"] = session_id
+    # Always set, so a value inherited from the bot's own environment never
+    # leaks in. A fork runs under a new ID; leave it empty so the CLI's own
+    # CLAUDE_CODE_SESSION_ID (the fork's) is what proactive posts register.
+    proc_env["CLAUDE_SESSION_ID"] = "" if fork else (session_id or "")
     # Per-room env from model-config.json ("env": {VAR: value, VAR: null}).
     # null unsets the variable — some models need an export, others an unset.
     for k, v in (entry.get("env") or {}).items():
@@ -775,7 +785,8 @@ def _spawn_claude_process(
         env=proc_env,
     )
     perm_mode = "bypassPermissions" if user_id in SUPERVISOR_USERS else "dontAsk"
-    logger.info(f"Spawned Claude process pid={proc.pid} (resume={session_id or 'none'}, user={user_id}, permissions={perm_mode})")
+    logger.info(f"Spawned Claude process pid={proc.pid} (resume={session_id or 'none'}"
+                f"{', fork' if fork and session_id else ''}, user={user_id}, permissions={perm_mode})")
     return proc
 
 
@@ -957,8 +968,14 @@ def _reader_loop(session: LiveSession) -> None:
             _live_sessions.pop(session.thread_ts, None)
 
 
-def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "") -> LiveSession:
-    """Get an existing live session or create a new one for a thread."""
+def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "",
+                                fork_from: str | None = None) -> LiveSession:
+    """Get an existing live session or create a new one for a thread.
+
+    fork_from: if the thread has no live process and no saved session, start
+    it as a fork of this session ID. The reader loop saves the fork's new ID
+    for the thread on the first result, so later turns resume the fork.
+    """
     with _live_sessions_lock:
         session = _live_sessions.get(thread_ts)
         if session and session.proc.poll() is None:
@@ -977,14 +994,18 @@ def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "")
                 oldest.proc.kill()
 
         saved_session_id = _get_session(thread_ts)
+        fork = bool(fork_from) and not saved_session_id
         proc = _spawn_claude_process(
-            session_id=saved_session_id,
+            session_id=fork_from if fork else saved_session_id,
             user_id=user_id,
             thread_ts=thread_ts,
             channel=channel,
+            fork=fork,
         )
         session = LiveSession(
             proc=proc,
+            # A fork's ID is unknown until its init event; never record the
+            # original here, or an early idle-out would save it for the thread.
             session_id=saved_session_id,
             channel=channel,
             thread_ts=thread_ts,
@@ -1910,7 +1931,8 @@ def process_message_async(event: dict) -> None:
         return
 
     try:
-        session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
+        session = _get_or_create_live_session(thread_ts, channel, user_id=user_id,
+                                              fork_from=event.get("_fork_from"))
 
         # Real-time steering: a turn is already running in this thread — don't
         # hold the message until it finishes. Write it to stdin now; the CLI
