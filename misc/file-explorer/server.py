@@ -5795,6 +5795,7 @@ def save_comment():
             comment = {
                 'id': str(uuid.uuid4())[:8],
                 'anchor_text': data.get('anchor_text', ''),
+                'paragraph_prefix': data.get('paragraph_prefix', ''),
                 'comment': data['comment'],
                 'timestamp': datetime.now().isoformat(),
                 'resolved': False,
