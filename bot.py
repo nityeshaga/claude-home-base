@@ -690,6 +690,19 @@ def _spawn_claude_process(
         cmd.extend(["--permission-mode", "dontAsk"])
     if session_id:
         cmd.extend(["--resume", session_id])
+    # Per-room MCP servers ("mcp_config": path to an mcpServers JSON file). Passed
+    # via --mcp-config, it shadows a same-named server from user/project scope
+    # and leaves the rest alone — e.g. one person's DM gets their own login to a
+    # shared tool. A file still holding a REPLACE_WITH_ placeholder is skipped.
+    mcp_config = os.path.expanduser(entry.get("mcp_config") or "")
+    if mcp_config:
+        try:
+            if "REPLACE_WITH_" in Path(mcp_config).read_text():
+                logger.info(f"mcp_config for {channel} has placeholder creds; skipping")
+            else:
+                cmd.extend(["--mcp-config", mcp_config])
+        except OSError:
+            logger.warning(f"mcp_config {mcp_config!r} for {channel} unreadable; skipping")
     # Per-room working directory ("cwd" in model-config.json). The cwd decides
     # which CLAUDE.md tree loads, so a project channel can start inside its repo.
     cwd = os.path.expanduser(entry.get("cwd") or "") or PROJECT_DIR

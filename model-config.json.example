@@ -28,6 +28,7 @@
       "model": "claude-opus-4-8[1m]"
     }
   },
+  "_readme_room_mcp": "A channel or dm_users entry can carry \"mcp_config\": \"~/Projects/slack-bot/mcp-overrides/alice.json\" — an mcpServers file passed to that room's sessions, shadowing a same-named server (e.g. so Alice's DM uses her own login). Put it under dm_users to apply it to one person's DM only.",
   "_readme_room_cwd": "A channel entry can carry \"cwd\": \"~/projects/my-app\" — sessions in that channel start in that directory instead of PROJECT_DIR, so its CLAUDE.md loads.",
   "_readme_room_env": "A channel or DM entry can carry \"env\": {\"VAR\": \"value\", \"OTHER\": null} — variables set (or, with null, unset) for the Claude process in that room only.",
   "model_prompts": {
