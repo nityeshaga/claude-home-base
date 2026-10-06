@@ -44,6 +44,7 @@ misc/file-explorer/     # Web file browser: markdown + HTML comments, /models pa
 search/                 # Hybrid keyword + vector search over local files and conversation logs
 jobs/                   # Scheduled (launchd) jobs, starting with the daily diary
 trust-battery/          # Nightly judge that sets how much autonomy your AI gets per person
+notepad/                # What each person needs to see: a `notepad` command with the rules in code, and a page to act from
 
 plugins/
 ├── coding/             # Precision coding tools

@@ -11,6 +11,7 @@ The generalized, open-source version of CC Home Base (Luo Ji's installation). Th
 - `identity.md` / `about-you-and-how-you-came-to-life.md` — identity templates
 - `plugins/` — marketplace of skills (coding, creative, more-ai, chief-of-staff)
 - `search/` — hybrid keyword + vector search over local files and conversation history
+- `notepad/` — SQLite notepad behind a `notepad` command (entry test, closed topics, append-only log), plus a page whose taps call the bot's `POST /notepad/act`
 - `index.html` — setup guide hosted at nityeshaga.github.io/claude-home-base
 
 ## Who cares about it
