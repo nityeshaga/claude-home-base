@@ -49,7 +49,7 @@ PORT = int(os.environ.get("VOICE_BRIDGE_PORT", "9443"))
 OPENAI_KEY = os.environ["OPENAI_API_KEY"]
 SLACK = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
 CLAUDE = os.path.expanduser(os.environ.get("CLAUDE_BIN") or shutil.which("claude") or str(HOME / ".local" / "bin" / "claude"))
-CLAUDE_MODEL = os.environ.get("VOICE_CLAUDE_MODEL", "claude-opus-5")
+CLAUDE_MODEL = os.environ.get("VOICE_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = os.environ.get("VOICE_CLAUDE_EFFORT", "low")
 LIVE_URI = "wss://api.openai.com/v1/live/sessions"
 LIVE_VOICE = os.environ.get("VOICE_LIVE_VOICE", "stone")

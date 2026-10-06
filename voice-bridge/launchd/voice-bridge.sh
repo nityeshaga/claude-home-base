@@ -8,6 +8,6 @@ BRIDGE_DIR="$HOME/claude-home-base/voice-bridge"
 cd "$BRIDGE_DIR" || exit 1
 mkdir -p logs
 echo "[$(date '+%F %T')] starting voice bridge" >> logs/run.log
-export VOICE_CLAUDE_MODEL="${VOICE_CLAUDE_MODEL:-claude-opus-5}"
+export VOICE_CLAUDE_MODEL="${VOICE_CLAUDE_MODEL:-claude-opus-5-5}"
 export VOICE_CLAUDE_EFFORT="${VOICE_CLAUDE_EFFORT:-low}"
 exec "$BRIDGE_DIR/venv/bin/python" bridge.py
