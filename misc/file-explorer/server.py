@@ -33,7 +33,7 @@ import tempfile
 import time
 import uuid
 from collections import OrderedDict
-from flask import Flask, Response, redirect, request, jsonify
+from flask import Flask, Response, redirect, request, jsonify, send_file
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -1029,6 +1029,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     background: var(--accent); color: var(--bg-primary); border-color: var(--accent);
   }
   .btn-edit:hover { background: var(--accent-hover); }
+  .btn-download {
+    display: inline-block; text-decoration: none; margin-left: auto;
+    padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border);
+    font-size: 13px; font-family: var(--font-mono); color: var(--text-secondary);
+    background: transparent; transition: background 150ms ease, color 150ms ease;
+  }
+  .btn-download:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+  .btn-download + .btn-edit { margin-left: 0; }
   .btn-save {
     background: var(--accent); color: var(--bg-primary); border-color: var(--accent);
   }
@@ -6235,7 +6243,11 @@ def serve_raw_file(filepath):
             return Response(html, content_type='text/html; charset=utf-8')
         except Exception:
             pass
-    return Response(p.read_bytes(), content_type=mime)
+    # send_file(conditional=True) answers Range requests, so <audio>/<video> can seek
+    resp = send_file(str(p), mimetype=mime, conditional=True)
+    if request.args.get('download'):
+        resp.headers['Content-Disposition'] = f'attachment; filename="{p.name}"'
+    return resp
 
 
 @app.route('/browse')
@@ -6347,6 +6359,14 @@ def _serve_directory(p, visitor=None):
     return _render_page(str(p), content)
 
 
+def _download_button(p):
+    """An <a> styled as a button. /raw honours ?download=1 with a
+    Content-Disposition: attachment, so this works for any file type."""
+    raw_url = '/raw' + urllib.parse.quote(str(p))
+    return (f'<a class="btn-download" href="{raw_url}?download=1" download="{html_mod.escape(p.name, quote=True)}"'
+            f' title="Download {html_mod.escape(p.name, quote=True)}">Download</a>')
+
+
 def _serve_file(p):
     ext = p.suffix.lower()
 
@@ -6386,6 +6406,7 @@ def _serve_file(p):
                 <div class="edit-bar">
                     <span class="filename" style="margin-bottom:0; padding-bottom:0; border-bottom:none;">{p.name} &middot; {human_size(p.stat().st_size)}</span>
                     <span id="comment-badge" class="comment-badge" style="display:none;"></span>
+                    {_download_button(p)}
                     {edit_button}
                 </div>
                 <script id="markdown-raw" type="text/plain">{raw_for_script}</script>
@@ -6442,7 +6463,7 @@ def _serve_file(p):
             lang = lang_for_ext(ext)
             escaped = html_mod.escape(text)
             content = f'''<div class="file-content">
-                <div class="filename">{p.name} &middot; {human_size(p.stat().st_size)}</div>
+                <div class="filename" style="display:flex; align-items:center; gap:12px;">{p.name} &middot; {human_size(p.stat().st_size)}{_download_button(p)}</div>
                 <div class="code-body"><pre><code class="language-{lang}">{escaped}</code></pre></div>
             </div>'''
 

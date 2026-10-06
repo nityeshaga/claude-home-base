@@ -54,6 +54,7 @@ python3 server.py
 - **Comments on markdown** — select any prose in a rendered `.md` file and leave a note in the margin rail, Google-Docs style. Same `<file>.comments.json` sidecar as the HTML overlay, same `/comments` endpoint, so your AI addresses both the same way. On narrow screens the rail becomes numbered markers and a bottom sheet
 - **Trust battery cards** — drop a `<name>.json` into `trust-battery/` and the home page grows a card per person: charge, autonomy tier, a 30-entry sparkline, and the latest delta with its reasoning
 - **Code viewing** with language-aware syntax highlighting (40+ extensions)
+- **Download** button on markdown and code views; any file downloads with `/raw/<path>?download=1`. Audio and video served through `/raw` can be seeked
 - **HTML preview** with render/source toggle
 - **Markdown editing** directly from the browser (any `.md` file), with edit-conflict protection — if a file changes on disk (e.g. an agent edits it) while you're editing, Save surfaces an inline "Overwrite anyway / Reload file" prompt instead of silently clobbering it. Unsaved changes trigger a leave-page warning.
 - **Scheduled task monitoring** — view launchd jobs, their schedules, run history, and Claude Code session output
