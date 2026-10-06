@@ -39,6 +39,27 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
+# Waitress listens on every interface, so without this anyone on the same Wi-Fi
+# reaches /raw and /save with no auth. Only this machine and the tailnet get in;
+# FILE_EXPLORER_ALLOWED_NETS adds more ranges (comma-separated CIDRs).
+import ipaddress
+_ALLOWED_NETS = [ipaddress.ip_network(n.strip()) for n in
+                 ['127.0.0.0/8', '::1/128', '100.64.0.0/10', 'fd7a:115c:a1e0::/48']
+                 + os.environ.get("FILE_EXPLORER_ALLOWED_NETS", "").split(",") if n.strip()]
+
+
+@app.before_request
+def _tailnet_only():
+    try:
+        addr = ipaddress.ip_address((request.remote_addr or '').split('%')[0])
+        addr = getattr(addr, 'ipv4_mapped', None) or addr
+        if any(addr in net for net in _ALLOWED_NETS):
+            return None
+    except ValueError:
+        pass
+    return Response('Tailscale only.\n', status=403, mimetype='text/plain')
+
+
 BASE_DIR = Path(os.environ.get("FILE_EXPLORER_BASE_DIR", str(Path.home())))
 PORT = int(os.environ.get("FILE_EXPLORER_PORT", "8888"))
 DISPLAY_NAME = os.environ.get("FILE_EXPLORER_NAME", "Your AI Employee")

@@ -1,6 +1,6 @@
 # File Explorer
 
-A beautiful, self-contained file browser for your AI employee's machine. Browse files, render markdown, view code with syntax highlighting, and monitor launchd scheduled tasks — all from any browser on your local network.
+A beautiful, self-contained file browser for your AI employee's machine. Browse files, render markdown, view code with syntax highlighting, and monitor launchd scheduled tasks — all from any browser on your Tailscale network.
 
 Dependencies: Flask and Waitress (production WSGI server).
 
@@ -12,7 +12,9 @@ python3 server.py
 # → File Explorer running on port 8888
 ```
 
-Open `http://<machine-ip>:8888` in your browser.
+Open `http://<machine-name>:8888` from any device on your tailnet.
+
+The server only answers this machine and Tailscale addresses; everything else gets a 403. It serves your whole home directory with no login, so keep it that way unless you know who is on the network. To let another range in, set `FILE_EXPLORER_ALLOWED_NETS`.
 
 ## Configuration
 
@@ -22,6 +24,7 @@ All settings are via environment variables:
 |---|---|---|
 | `FILE_EXPLORER_BASE_DIR` | `~` (home dir) | Root directory to browse |
 | `FILE_EXPLORER_PORT` | `8888` | Port to listen on |
+| `FILE_EXPLORER_ALLOWED_NETS` | _(none)_ | Extra networks allowed in besides localhost and Tailscale, comma-separated CIDRs (e.g. `192.168.1.0/24`) |
 | `FILE_EXPLORER_NAME` | `Your AI Employee` | Display name shown in the UI |
 | `FILE_EXPLORER_TASK_PREFIXES` | _(none)_ | Comma-separated launchd label prefixes to monitor (e.g. `com.myai.,com.cc.`) |
 | `FILE_EXPLORER_BOT_DIR` | `~/Projects/slack-bot` | Slack bot directory — where `model-config.json` and the bot `.env` live (for the `/models` page) |
