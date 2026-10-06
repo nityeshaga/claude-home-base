@@ -665,6 +665,7 @@ def _spawn_claude_process(
     """
     battery_context = _get_trust_battery_context()
     model, effort, model_prompt = resolve_model_settings(channel, user_id)
+    entry = _resolve_entry(channel, user_id)
     cmd = [
         "claude",
         "-p", battery_context,
@@ -701,6 +702,13 @@ def _spawn_claude_process(
         proc_env["CLAUDE_CHANNEL_ID"] = channel
     if session_id:
         proc_env["CLAUDE_SESSION_ID"] = session_id
+    # Per-room env from model-config.json ("env": {VAR: value, VAR: null}).
+    # null unsets the variable — some models need an export, others an unset.
+    for k, v in (entry.get("env") or {}).items():
+        if v is None:
+            proc_env.pop(k, None)
+        else:
+            proc_env[k] = str(v)
 
     proc = subprocess.Popen(
         cmd,

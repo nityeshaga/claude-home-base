@@ -28,6 +28,7 @@
       "model": "claude-opus-4-8[1m]"
     }
   },
+  "_readme_room_env": "A channel or DM entry can carry \"env\": {\"VAR\": \"value\", \"OTHER\": null} — variables set (or, with null, unset) for the Claude process in that room only.",
   "model_prompts": {
     "claude-fable-5": "Plain text appended to the system prompt wherever this model answers — say what it needs that CLAUDE.md does not cover."
   },
