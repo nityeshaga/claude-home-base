@@ -1451,6 +1451,39 @@ def send_to_channel(
     return effective_thread_ts
 
 
+def send_blocks_to_channel(
+    channel: str,
+    blocks: list,
+    text: str = "",
+    session_id: str | None = None,
+    thread_ts: str | None = None,
+) -> str | None:
+    """Post raw Block Kit blocks to a channel (optionally in a thread).
+
+    Registers the thread against session_id (like send_to_channel), so replies
+    to the posted message resume that session. Returns the posted message ts.
+    """
+    kwargs: dict = {"channel": channel, "blocks": blocks,
+                    "text": text or "(rich message)",
+                    "unfurl_links": False, "unfurl_media": False}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    resp = slack_client.chat_postMessage(**kwargs)
+    # Replies key off the thread ROOT: the existing thread if given, else the
+    # new message itself.
+    effective_thread_ts = thread_ts or resp.get("ts")
+
+    if session_id and effective_thread_ts:
+        _save_session(effective_thread_ts, session_id)
+
+    audit_logger.info(
+        f"PROACTIVE_BLOCKS | CHANNEL:{channel} "
+        f"| THREAD:{effective_thread_ts} | SESSION:{session_id or 'none'} "
+        f"| BLOCKS:{len(blocks)}"
+    )
+    return resp.get("ts")
+
+
 # ---------------------------------------------------------------------------
 # Read access (CLI mode) — read messages from any channel Andy has scope for
 # ---------------------------------------------------------------------------
@@ -2157,6 +2190,12 @@ def main():
         help="Post a message to a channel and exit",
     )
     parser.add_argument(
+        "--channel-blocks", metavar="CHANNEL",
+        help="Read Block Kit JSON from stdin ({\"text\": ..., \"blocks\": [...]} "
+             "or a bare blocks list), post it to a channel, and register the "
+             "thread for session resume (--session-id or $CLAUDE_SESSION_ID)",
+    )
+    parser.add_argument(
         "--history", metavar="CHANNEL_ID",
         help="Print recent messages from a channel (or a thread if --thread is set)",
     )
@@ -2178,9 +2217,20 @@ def main():
     )
     parser.add_argument(
         "--session-id", metavar="SESSION_ID", dest="session_id",
-        help="Register this Claude session_id as the resume target for replies in this DM thread. Use for cron jobs that DM someone, exit, and want to continue where they left off when the person replies.",
+        help="Register this Claude session_id as the resume target for replies in the posted thread. Use for cron jobs that post, exit, and want to continue where they left off when someone replies. Defaults to $CLAUDE_SESSION_ID, then $CLAUDE_CODE_SESSION_ID.",
     )
     args = parser.parse_args()
+
+    # Session id for thread registration: explicit flag, then CLAUDE_SESSION_ID
+    # (set by the bot for sessions it spawns, and by job wrappers), then
+    # CLAUDE_CODE_SESSION_ID — which the Claude CLI itself exports to every Bash
+    # subprocess, so posts from ANY session register their thread for
+    # reply-resume without wrapper env setup.
+    env_session_id = (
+        os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or None
+    )
 
     # CLI modes — send and exit
     if args.send:
@@ -2193,7 +2243,7 @@ def main():
         else:
             thread_ts = send_dm(
                 args.send[0], args.send[1],
-                session_id=args.session_id,
+                session_id=args.session_id or env_session_id,
                 thread_ts=args.thread,
                 forward_to=args.forward_to,
             )
@@ -2221,7 +2271,27 @@ def main():
             if ts:
                 print(ts)
         else:
-            send_to_channel(args.channel[0], args.channel[1], thread_ts=args.thread)
+            thread_ts = send_to_channel(
+                args.channel[0], args.channel[1],
+                session_id=args.session_id or env_session_id,
+                thread_ts=args.thread,
+            )
+            if thread_ts:
+                print(thread_ts)
+        return
+
+    if args.channel_blocks:
+        raw = sys.stdin.read().strip()
+        data = json.loads(raw)  # let a malformed payload fail loudly
+        blocks = data if isinstance(data, list) else data.get("blocks", [])
+        text = "" if isinstance(data, list) else data.get("text", "")
+        ts = send_blocks_to_channel(
+            args.channel_blocks, blocks, text=text,
+            session_id=args.session_id or env_session_id,
+            thread_ts=args.thread,
+        )
+        if ts:
+            print(ts)
         return
 
     if args.history:
