@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#EDF0EB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131C30" media="(prefers-color-scheme: dark)">
+<title>{{ sentence }} {{ name }}'s notepad</title>
+<link rel="stylesheet" href="/static/page.css?v=1">
+</head>
+<body data-person="{{ person }}">
+<main class="wrap">
+
+  {%- if warning %}
+  <p class="warning" role="alert">{{ warning }}</p>
+  {%- endif %}
+
+  <header class="top">
+    <p class="date">{{ today }}</p>
+    <h1 class="sentence" id="sentence">{{ sentence }}</h1>
+  </header>
+
+  <form class="add" id="add" method="post" action="/{{ person }}/items">
+    <label class="sr" for="add-line">Add an item to your notepad</label>
+    <input id="add-line" name="line" type="text" autocomplete="off" enterkeyhint="done" maxlength="500"
+           placeholder="Add something to your notepad">
+    <button class="add-btn" type="submit" disabled>Add</button>
+    <p class="msg" role="status" aria-live="polite"></p>
+  </form>
+
+  <section class="section" id="needs" aria-labelledby="needs-h">
+    <h2 class="section-h" id="needs-h">Needs you <span class="count" data-count="needs">{{ needs|length }}</span></h2>
+    <div class="list" id="needs-list">
+      {%- for c in needs %}{% with section='needs' %}{% include '_card.html' %}{% endwith %}{% endfor %}
+    </div>
+    <div class="empty" id="needs-empty" {% if needs %}hidden{% endif %}>
+      {%- if read %}
+      <p class="empty-h">Nothing new since you last looked.</p>
+      <p>What you have already read is below.</p>
+      {%- else %}
+      <p class="empty-h">Nobody is waiting on you.</p>
+      <p>{% if run_clock %}{{ assistant }} last checked at {{ run_clock }}. {% endif %}Have a good day.</p>
+      {%- endif %}
+    </div>
+  </section>
+
+  {%- if working %}
+  <section class="section" id="working" aria-labelledby="working-h">
+    <h2 class="section-h" id="working-h">In progress <span class="count" data-count="working">{{ working|length }}</span></h2>
+    <div class="list">
+      {%- for c in working %}{% with section='working' %}{% include '_card.html' %}{% endwith %}{% endfor %}
+    </div>
+  </section>
+  {%- endif %}
+
+  {%- if read %}
+  <section class="section" id="read" aria-labelledby="read-h">
+    <h2 class="section-h" id="read-h">Read <span class="count" data-count="read">{{ read|length }}</span></h2>
+    <p class="section-note">You have seen these. Tap one to act on it.</p>
+    <div class="list list--tight">
+      {%- for c in read %}{% with section='read' %}{% include '_card.html' %}{% endwith %}{% endfor %}
+    </div>
+  </section>
+  {%- endif %}
+
+  {%- if run %}
+  <footer class="run">
+    <details>
+      <summary>
+        <span class="run-h">Last run <span class="run-when">{{ run.when }}</span>{% if run.status != 'ok' %} <span class="run-status run-status--{{ run.status }}">{{ 'still running' if run.status == 'running' else run.status }}</span>{% endif %}</span>
+        <dl class="stats">
+          <div><dt>Time</dt><dd>{{ run.time or '–' }}</dd></div>
+          <div><dt>Tokens in / out</dt><dd>{{ run.tokens_in or '–' }} <span class="slash">/</span> {{ run.tokens_out or '–' }}</dd></div>
+          <div><dt>Sub-agents</dt><dd>{{ run.subagents if run.subagents is not none else '–' }}</dd></div>
+          <div><dt>Emails {{ run.email_verb }}</dt><dd>{{ run.email_count }}</dd></div>
+        </dl>
+        {%- if run.emails %}<span class="run-more">Show the {{ run.email_count }} emails</span>{% endif %}
+      </summary>
+      {%- if run.emails %}
+      <ul class="emails">
+        {%- for m in run.emails %}
+        <li><span class="from">{{ m.from }}</span><span class="subj">{{ m.subject }}</span>{% if m.reason %}<span class="why">{{ m.reason }}</span>{% endif %}</li>
+        {%- endfor %}
+      </ul>
+      {%- endif %}
+    </details>
+  </footer>
+  {%- endif %}
+
+</main>
+<script src="/static/page.js?v=1" defer></script>
+</body>
+</html>

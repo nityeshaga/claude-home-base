@@ -6,3 +6,7 @@ __pycache__/
 .sessions.json
 *.log
 AGENTS.md
+
+# notepad state
+notepad/notepad.db*
+notepad/config.json

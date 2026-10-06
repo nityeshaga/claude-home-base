@@ -1,0 +1,61 @@
+{#- One item. section is needs | working | read. The four controls, and nothing else. -#}
+{%- set working = c.status == 'working' -%}
+<article class="card card--{{ section }}" id="item-{{ c.id }}" data-id="{{ c.id }}" data-seen="{{ 1 if c.seen_at else 0 }}">
+  {%- if section == 'read' %}
+  <button class="expand" type="button" aria-expanded="false" aria-label="Show what you can do with: {{ c.line }}"></button>
+  {%- endif %}
+  <form class="x-form" method="post" action="/items/{{ c.id }}/dismiss" data-kind="close">
+    <button class="x" type="submit" aria-label="Dismiss: {{ c.line }}" title="Dismiss">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+    </button>
+  </form>
+
+  <header class="who">
+    <span class="name">{{ c.who }}</span>
+    {%- if c.wait_text %}
+    <span class="wait" title="Waiting since {{ c.waiting_since }}">
+      {%- if c.ticks %}<span class="ticks" aria-hidden="true">{% for n in range(c.ticks) %}<i style="--i:{{ n }}"></i>{% endfor %}{% if c.ticks_more %}<b>+</b>{% endif %}</span>{% endif -%}
+      <span class="wait-text">{% if c.wait_text == 'today' %}today{% else %}{{ c.wait_text }}, since {{ c.since_label }}{% endif %}</span>
+    </span>
+    {%- endif %}
+  </header>
+
+  <p class="line">{{ c.line }}</p>
+  {%- if c.quote %}<p class="quote">You said: “{{ c.quote }}”</p>{% endif %}
+  {%- if c.link_url %}
+  <a class="ext" href="{{ c.link_url }}" target="_blank" rel="noopener">Open {{ c.link_url.split('/')[2] if '//' in c.link_url else c.link_url }}</a>
+  {%- endif %}
+
+  {%- if working %}
+  <div class="standing">
+    <p>{{ c.standing or assistant ~ ' is working on it.' }}</p>
+    {%- if c.thread %}<a class="thread" href="{{ c.thread }}" target="_blank" rel="noopener">Open the Slack thread</a>{% endif %}
+  </div>
+  {%- endif %}
+
+  <div class="controls">
+    <div class="row">
+      {%- if c.action_label %}
+      <form method="post" action="/items/{{ c.id }}/act" data-kind="act" class="grow">
+        <button class="btn {{ 'btn--quiet' if working else 'btn--primary' }}" type="submit">{{ c.action_label }}</button>
+      </form>
+      {%- endif %}
+      <form method="post" action="/items/{{ c.id }}/handled" data-kind="close" class="{{ '' if c.action_label else 'grow' }}">
+        <button class="btn btn--ghost" type="submit">I handled it</button>
+      </form>
+    </div>
+    <form class="tell" method="post" action="/items/{{ c.id }}/act" data-kind="act">
+      <label class="sr" for="tell-{{ c.id }}">Or tell {{ assistant }} what to do</label>
+      <input id="tell-{{ c.id }}" name="text" type="text" autocomplete="off" enterkeyhint="send" placeholder="Or tell {{ assistant }} what to do">
+      <button class="send" type="submit" aria-label="Send to {{ assistant }}" disabled>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4M4.5 9.5L10 4l5.5 5.5"/></svg>
+      </button>
+    </form>
+  </div>
+
+  <div class="started" hidden>
+    <p><span class="dot" aria-hidden="true"></span>Started. {{ assistant }} is on it in Slack.</p>
+    <a class="thread" href="#" target="_blank" rel="noopener">Open the Slack thread</a>
+  </div>
+  <p class="msg" role="status" aria-live="polite"></p>
+</article>
