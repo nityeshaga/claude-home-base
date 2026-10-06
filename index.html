@@ -246,7 +246,7 @@
                     </button>
                     <div class="accordion-content">
                         <div class="px-5 pb-4 text-[0.92rem] text-slate-500 dark:text-slate-400 leading-relaxed">
-                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Tailscale creates an invisible, encrypted tunnel between your devices. Your laptop and the dedicated Mac join the same private network — as if they were on the same WiFi, even when you're in different locations. Each device gets a stable address (like 100.x.x.x) that never changes.
+                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Tailscale creates an invisible, encrypted tunnel between your devices. Your laptop and the dedicated Mac join the same private network — as if they were on the same WiFi, even when you're in different locations. Each device gets a name on that network (its MagicDNS name, like <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">your-mac</code>). Use the name, not the 100.x.x.x address behind it: the address changes if you ever replace the hardware.
                             <br><br>
                             <strong class="text-slate-900 dark:text-slate-100">Why do you need it?</strong> At home, you can SSH using the local network. But the moment you step out — a coffee shop, a co-working space, travelling — your home network is unreachable. Tailscale makes your Mac accessible from anywhere in the world, securely, without exposing anything to the public internet. Free for personal use.
                             <br><br>
@@ -316,7 +316,7 @@
                     </button>
                     <div class="accordion-content">
                         <div class="px-5 pb-4 text-[0.92rem] text-slate-500 dark:text-slate-400 leading-relaxed">
-                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Anthropic's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude</code> command-line tool. When the Slack bot receives a message, it runs <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude -p "your message"</code> — giving Claude access to your codebase, CLAUDE.md context, and any tools you configure. Powered by the $200/month Max subscription — flat rate, no per-message costs.
+                            <strong class="text-slate-900 dark:text-slate-100">What is it?</strong> Anthropic's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude</code> command-line tool. The Slack bot keeps one <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">claude</code> process running per Slack thread and feeds your messages into it — giving Claude access to your codebase, CLAUDE.md context, and any tools you configure, with replies streaming back as they are written. Powered by the $200/month Max subscription — flat rate, no per-message costs.
                             <br><br>
                             <strong class="text-slate-900 dark:text-slate-100">Why not the API?</strong> The CLI inherits everything — your project context, installed tools, plugins. The API would require rebuilding all of that. Plus, Max is flat-rate vs unpredictable API billing.
                         </div>
@@ -451,11 +451,11 @@
                             </div>
                         </li>
                         <li>Do the same on <strong class="text-slate-900 dark:text-slate-100">your main machine</strong> — same account</li>
-                        <li>Both devices now appear in your Tailscale dashboard with stable IPs like <strong class="text-slate-900 dark:text-slate-100">100.x.x.x</strong></li>
+                        <li>Both devices now appear in your Tailscale dashboard. Note the Mac's <strong class="text-slate-900 dark:text-slate-100">machine name</strong> — with MagicDNS on (the default), that name works as its address from any of your devices</li>
                         <li>In Tailscale preferences on the dedicated Mac, enable <strong class="text-slate-900 dark:text-slate-100">"Start Tailscale when I log in"</strong></li>
                     </ul>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
-                        <strong class="text-blue-800">At home</strong> you can SSH using the local address (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@your-mac.local</code>). <strong class="text-blue-800">Outside</strong> use the Tailscale IP (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@100.x.x.x</code>). Both always work.
+                        <strong class="text-blue-800">At home</strong> you can SSH using the local address (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@your-mac.local</code>). <strong class="text-blue-800">Outside</strong> use its Tailscale name (<code class="bg-blue-100/50 px-1 py-0.5 rounded text-xs font-mono">bot@your-mac</code>). Both always work.
                     </div>
                 </div>
 
@@ -658,7 +658,9 @@
                         <span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt<br><br>
                         <span class="comment"># Configure environment variables</span><br>
                         <span class="cmd">cp</span> .env.example .env<br>
-                        <span class="cmd">nano</span> .env  <span class="comment"># Add your Slack tokens, Signing Secret, user IDs</span>
+                        <span class="cmd">nano</span> .env  <span class="comment"># Add your Slack tokens, Signing Secret, user IDs</span><br><br>
+                        <span class="comment"># Optional: choose which model answers in which channel or DM</span><br>
+                        <span class="cmd">cp</span> model-config.json.example model-config.json
                     </div>
                     <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
                         <strong class="text-amber-800 dark:text-amber-400">Note:</strong> macOS restricts launchd access to certain folders (like Documents). Running the bot from <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">~/Projects/</code> avoids permission errors.
@@ -666,11 +668,12 @@
                     <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">The repo's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">bot.py</code> already handles:</p>
                     <ul class="checklist space-y-2 text-[0.92rem] text-slate-500 dark:text-slate-400">
                         <li>HTTP Events API via Flask (production-standard, each event is a stateless HTTP POST)</li>
-                        <li>Async processing — responds to Slack within 3 seconds, runs Claude in background</li>
-                        <li>Auth gating — only allowed Slack user IDs can interact</li>
-                        <li>Thread-based conversations with Claude session continuity</li>
-                        <li>Markdown to Slack formatting conversion</li>
-                        <li>File/image attachment handling</li>
+                        <li>One long-lived Claude process per thread — replies stream in as they are written, and the thread keeps its context</li>
+                        <li>Steering — message a thread while it is working and it sees you at the next step; type a bare <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">stop</code> to interrupt it</li>
+                        <li>Auth gating — only allowed Slack user IDs can interact, with permission tiers</li>
+                        <li>Native Slack tables, charts and buttons; a button click comes back to the same session</li>
+                        <li>File/image attachment handling, both ways</li>
+                        <li>A model per channel or DM, changed without a restart</li>
                         <li>Audit logging of every interaction</li>
                     </ul>
                 </div>
@@ -800,12 +803,16 @@
                         <span class="comment"># Verify it's running</span><br>
                         <span class="cmd">launchctl</span> list | <span class="cmd">grep</span> homebase<br>
                         <span class="cmd">curl</span> <span class="flag">-s</span> http://localhost:3000/health<br><br>
-                        <span class="comment"># Test crash recovery — kill it, watch launchd bring it back</span><br>
-                        <span class="cmd">kill</span> $(pgrep -f bot.py)<br>
-                        <span class="cmd">sleep</span> 3 && <span class="cmd">pgrep</span> <span class="flag">-f</span> bot.py<br><br>
+                        <span class="comment"># Test a restart — launchd stops it and starts it again at once</span><br>
+                        <span class="cmd">launchctl</span> kickstart <span class="flag">-k</span> gui/$(id -u)/com.claude.homebase<br>
+                        <span class="cmd">sleep</span> 3 && <span class="cmd">curl</span> <span class="flag">-s</span> http://localhost:3000/health<br><br>
                         <span class="comment"># Test reboot survival</span><br>
                         <span class="cmd">sudo</span> reboot<br>
                         <span class="comment"># Wait 2-3 min, then DM the bot in Slack</span>
+                    </div>
+
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
+                        <strong class="text-amber-800 dark:text-amber-400">Always restart with kickstart.</strong> Do not <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">kill</code> the bot and wait for launchd to bring it back. With the lid closed and the display off, launchd can hold a crashed service for many minutes before it restarts it. <code class="bg-amber-100/50 dark:bg-amber-900/50 px-1 py-0.5 rounded text-xs font-mono">kickstart -k</code> is never deferred.
                     </div>
 
                     <div class="mt-4 bg-green-50 dark:bg-green-950/30 border border-green-100 dark:border-green-900 rounded-xl p-4 text-[0.92rem] text-green-800 dark:text-green-300">
@@ -952,11 +959,11 @@
                             </tr>
                             <tr class="border-b border-slate-100 dark:border-slate-800">
                                 <td class="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap">SSH (anywhere)</td>
-                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">ssh YOUR_USERNAME@100.x.x.x</code></td>
+                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">ssh YOUR_USERNAME@your-mac</code></td>
                             </tr>
                             <tr class="border-b border-slate-100 dark:border-slate-800">
                                 <td class="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap">Screen Sharing</td>
-                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">vnc://100.x.x.x</code></td>
+                                <td class="py-3"><code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">vnc://your-mac</code></td>
                             </tr>
                             <tr class="border-b border-slate-100 dark:border-slate-800">
                                 <td class="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap">Claude Code</td>
@@ -984,7 +991,7 @@
                 <div class="code-block text-[0.78rem]">
                     <span class="comment"># SSH in — at home (local) or anywhere (Tailscale)</span><br>
                     <span class="cmd">ssh</span> YOUR_USERNAME@your-mac.local  <span class="comment"># at home</span><br>
-                    <span class="cmd">ssh</span> YOUR_USERNAME@100.x.x.x       <span class="comment"># from anywhere via Tailscale</span><br><br>
+                    <span class="cmd">ssh</span> YOUR_USERNAME@your-mac        <span class="comment"># from anywhere, by its Tailscale name</span><br><br>
 
                     <span class="comment"># Check bot status</span><br>
                     <span class="cmd">launchctl</span> list | <span class="cmd">grep</span> homebase<br>
@@ -994,8 +1001,7 @@
                     <span class="cmd">tail</span> <span class="flag">-f</span> ~/Projects/slack-bot/bot.log<br><br>
 
                     <span class="comment"># Restart the bot</span><br>
-                    <span class="cmd">launchctl</span> unload ~/Library/LaunchAgents/com.claude.homebase.plist<br>
-                    <span class="cmd">launchctl</span> load ~/Library/LaunchAgents/com.claude.homebase.plist<br><br>
+                    <span class="cmd">launchctl</span> kickstart <span class="flag">-k</span> gui/$(id -u)/com.claude.homebase<br><br>
 
                     <span class="comment"># Pull latest code</span><br>
                     <span class="cmd">cd</span> ~/Projects/your-product && <span class="cmd">git</span> pull<br><br>
@@ -1007,7 +1013,7 @@
 
                     <span class="comment"># Full desktop access (home or via Tailscale)</span><br>
                     <span class="comment"># Finder &rarr; Go &rarr; Connect to Server &rarr; vnc://your-mac.local (home)</span><br>
-                    <span class="comment"># Finder &rarr; Go &rarr; Connect to Server &rarr; vnc://100.x.x.x (anywhere)</span><br><br>
+                    <span class="comment"># Finder &rarr; Go &rarr; Connect to Server &rarr; vnc://your-mac (anywhere, by its Tailscale name)</span><br><br>
 
                     <span class="comment"># Or just walk over and open the lid :)</span>
                 </div>
