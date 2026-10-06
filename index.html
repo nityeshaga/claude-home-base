@@ -890,10 +890,131 @@
             </div>
         </section>
 
-        <!-- Phase 5: Using It -->
-        <section class="pb-16">
+        <!-- Phase 5: File explorer -->
+        <section class="pb-16" id="file-explorer">
             <div class="flex items-center gap-3 mb-2">
                 <span class="text-xs font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500">Phase 5</span>
+            </div>
+            <h2 class="text-2xl font-bold mb-2">Give it a window</h2>
+            <p class="text-slate-500 dark:text-slate-400 mb-8">Slack is good for talking. It is a poor place to read a ten-page plan or review a web page your AI just built. The file explorer is a small website on your Mac for exactly that. ~10 minutes.</p>
+
+            <div class="space-y-6">
+
+                <div class="grid sm:grid-cols-3 gap-3 text-[0.88rem]">
+                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                        <div class="font-semibold mb-1">Read</div>
+                        <p class="text-slate-500 dark:text-slate-400">Browse the Mac's files from your phone or laptop. Markdown renders as a document, HTML as a page, code with highlighting.</p>
+                    </div>
+                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                        <div class="font-semibold mb-1">Comment</div>
+                        <p class="text-slate-500 dark:text-slate-400">Select text in a markdown file, or click an element on an HTML page, and leave a note. Then tell your AI to address the comments.</p>
+                    </div>
+                    <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                        <div class="font-semibold mb-1">Watch</div>
+                        <p class="text-slate-500 dark:text-slate-400">Every conversation it has had, every scheduled job and when it last ran, and which model answers in which Slack room.</p>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">1. Try it</h3>
+                    <div class="code-block">
+                        <span class="cmd">cd</span> ~/Projects/slack-bot<br>
+                        venv/bin/<span class="cmd">pip install</span> waitress<br><br>
+                        <span class="cmd">FILE_EXPLORER_NAME</span>=<span class="string">"Jarvis"</span> venv/bin/python misc/file-explorer/server.py<br><br>
+                        <span class="comment"># From any device on your tailnet, open:</span><br>
+                        <span class="string">http://your-mac:8888</span>
+                    </div>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
+                        <strong class="text-blue-800 dark:text-blue-400">Tailscale only.</strong> It serves your whole home directory with no login, so it answers only the Mac itself and devices on your tailnet. Everyone else gets a 403, including people on your home Wi-Fi.
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">2. Tell it who you are</h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">The conversations, tasks and models pages are for supervisors only, and it knows a supervisor by their device's Tailscale address. Until you add yours, those pages are hidden. On your laptop, run <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">tailscale ip -4</code>, then edit the <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">TAILSCALE_USERS</code> block near the top of <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">misc/file-explorer/server.py</code>:</p>
+                    <div class="code-block">
+                        TAILSCALE_USERS = {<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"100.101.102.103"</span>: {<span class="string">"name"</span>: <span class="string">"You"</span>, <span class="string">"ring"</span>: <span class="flag">1</span>},&nbsp;&nbsp;<span class="comment"># your laptop: supervisor</span><br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"100.104.105.106"</span>: {<span class="string">"name"</span>: <span class="string">"You (phone)"</span>, <span class="string">"ring"</span>: <span class="flag">1</span>},<br>
+                        }
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">3. Keep it running</h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">Same pattern as the bot. Replace <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">YOUR_USERNAME</code> and the names:</p>
+                    <div class="code-block text-[0.72rem]">
+                        <span class="cmd">cat</span> &lt;&lt;'EOF' &gt; ~/Library/LaunchAgents/com.claude.file-explorer.plist<br>
+                        <span class="string">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span><br>
+                        <span class="string">&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"</span><br>
+                        <span class="string">  "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;</span><br>
+                        <span class="string">&lt;plist version="1.0"&gt;</span><br>
+                        <span class="string">&lt;dict&gt;</span><br>
+                        <span class="string">    &lt;key&gt;Label&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;com.claude.file-explorer&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;key&gt;ProgramArguments&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;array&gt;</span><br>
+                        <span class="string">        &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/venv/bin/python&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/misc/file-explorer/server.py&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;/array&gt;</span><br>
+                        <span class="string">    &lt;key&gt;WorkingDirectory&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;/Users/YOUR_USERNAME&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;key&gt;EnvironmentVariables&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;dict&gt;</span><br>
+                        <span class="string">        &lt;key&gt;PATH&lt;/key&gt;</span><br>
+                        <span class="string">        &lt;string&gt;/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_NAME&lt;/key&gt;&lt;string&gt;Jarvis&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_TASK_PREFIXES&lt;/key&gt;&lt;string&gt;com.claude.&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_COMMENT_AUTHORS&lt;/key&gt;&lt;string&gt;You&lt;/string&gt;</span><br>
+                        <span class="string">        &lt;key&gt;FILE_EXPLORER_DM_USERS&lt;/key&gt;&lt;string&gt;U0YOURSLACKID:You&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;/dict&gt;</span><br>
+                        <span class="string">    &lt;key&gt;RunAtLoad&lt;/key&gt;&lt;true/&gt;</span><br>
+                        <span class="string">    &lt;key&gt;KeepAlive&lt;/key&gt;&lt;true/&gt;</span><br>
+                        <span class="string">    &lt;key&gt;StandardOutPath&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/file-explorer.log&lt;/string&gt;</span><br>
+                        <span class="string">    &lt;key&gt;StandardErrorPath&lt;/key&gt;</span><br>
+                        <span class="string">    &lt;string&gt;/Users/YOUR_USERNAME/Projects/slack-bot/file-explorer-stderr.log&lt;/string&gt;</span><br>
+                        <span class="string">&lt;/dict&gt;</span><br>
+                        <span class="string">&lt;/plist&gt;</span><br>
+                        EOF<br><br>
+                        <span class="cmd">launchctl</span> load ~/Library/LaunchAgents/com.claude.file-explorer.plist<br>
+                        <span class="cmd">curl</span> <span class="flag">-s -o /dev/null -w</span> <span class="string">"%{http_code}\n"</span> http://localhost:8888/&nbsp;&nbsp;<span class="comment"># 302 means it is up</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">Every setting is listed in <a href="https://github.com/nityeshaga/claude-home-base/blob/main/misc/file-explorer/README.md" class="text-blue-600 hover:underline" target="_blank">the file explorer's README</a>.</p>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-3">4. Comment on its work</h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mb-3">This is the part that changes how you work with it. Reviewing in Slack means retyping what you are pointing at. Here you point.</p>
+                    <div class="bg-slate-50 dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800">
+                        <div class="grid sm:grid-cols-4 gap-3 text-xs text-center items-stretch">
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">1. It writes</div>
+                                <div class="text-slate-400 dark:text-slate-500">a plan in markdown, or a page in HTML, and sends you the link</div>
+                            </div>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">2. You point</div>
+                                <div class="text-slate-400 dark:text-slate-500">select a sentence, or hit <strong>Comment</strong> and click an element, and type a note</div>
+                            </div>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">3. You say</div>
+                                <div class="text-slate-400 dark:text-slate-500">"address the comments on the plan" in Slack</div>
+                            </div>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3">
+                                <div class="font-semibold text-sm mb-1">4. It resolves</div>
+                                <div class="text-slate-400 dark:text-slate-500">reads each note, makes the change, and marks the note resolved</div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem] mt-3">Notes are stored next to the file in <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">&lt;file&gt;.comments.json</code>; the file itself is never touched. The starter <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">CLAUDE.md</code> already tells your AI how to fetch and resolve them.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Phase 6: Using It -->
+        <section class="pb-16">
+            <div class="flex items-center gap-3 mb-2">
+                <span class="text-xs font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500">Phase 6</span>
             </div>
             <h2 class="text-2xl font-bold mb-2">Using your AI cofounder</h2>
             <p class="text-slate-500 dark:text-slate-400 mb-8">How you interact with it day-to-day.</p>
