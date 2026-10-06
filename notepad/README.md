@@ -78,6 +78,10 @@ The ledger is a markdown table at `~/closed-items.md` (or `closed_ledger` in con
 
 Match terms are AND-ed and matched as lowercase substrings. Keep them narrow. `user` is a name, or `both` for everyone. To close a topic, append a row. Nothing is ever removed.
 
+## The page
+
+`page/` is a small web page over the notepad, one URL per person. Each item has four controls: the one suggested action, "I handled it", a text box for your own instruction, and a cross. Tapping an action starts a Claude session in a Slack thread with that item's instruction. See `page/README.md`.
+
 ## Tests
 
 ```bash
