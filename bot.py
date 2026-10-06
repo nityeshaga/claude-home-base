@@ -1088,12 +1088,14 @@ def post_response(channel: str, message: str, thread_ts: str | None = None) -> s
                 result = slack_client.chat_postMessage(
                     channel=channel, thread_ts=parent_ts, text=fallback,
                     blocks=[{"type": "markdown", "text": chunk}],
+                    unfurl_links=False, unfurl_media=False,
                 )
             except Exception as e:
                 logger.warning(f"markdown block post failed, using plain text: {e}")
         if result is None:
             result = slack_client.chat_postMessage(
                 channel=channel, thread_ts=parent_ts, text=fallback,
+                unfurl_links=False, unfurl_media=False,
             )
         if parent_ts is None:
             parent_ts = result["ts"]
