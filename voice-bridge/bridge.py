@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -615,8 +616,26 @@ class Call:
 
 INDEX = (HERE / "static" / "index.html")
 
+# The bridge listens on every interface, and picking up starts a Claude session with full
+# access as the default caller. So only this machine and the tailnet may connect;
+# VOICE_ALLOWED_NETS adds more ranges (comma-separated CIDRs).
+ALLOWED_NETS = [ipaddress.ip_network(n.strip()) for n in
+                ["127.0.0.0/8", "::1/128", "100.64.0.0/10", "fd7a:115c:a1e0::/48"]
+                + os.environ.get("VOICE_ALLOWED_NETS", "").split(",") if n.strip()]
+
+
+def caller_allowed(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address((addr or "").split("%")[0])
+    except ValueError:
+        return False
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    return any(ip in net for net in ALLOWED_NETS)
+
 
 def process_request(connection, request):
+    if not caller_allowed((connection.remote_address or ("",))[0]):
+        return connection.respond(HTTPStatus.FORBIDDEN, "Tailscale only.\n")
     path = urlparse(request.path).path
     if path == "/ws":
         return None  # proceed with websocket handshake

@@ -80,6 +80,10 @@ The bridge sets `VOICE_CALL`, `CLAUDE_CHANNEL_ID`, `CLAUDE_THREAD_TS` and `CLAUD
 
 `launchd/` has a plist and wrapper for each service. Copy the wrapper to `~/scripts/`, set `BRIDGE_DIR` in it, replace `YOUR_USERNAME` in the plist, copy the plist to `~/Library/LaunchAgents/`, `launchctl load` it. Both are `KeepAlive` servers, not cron jobs; the rules in [`../jobs/README.md`](../jobs/README.md) about `WorkingDirectory` and local times still apply. Restart after a code change with `launchctl kickstart -k gui/$(id -u)/com.claude.voice-bridge`. Prompt edits need no restart.
 
+### Who can call
+
+The bridge answers only this machine and Tailscale addresses; everything else gets a 403, on the page and on the call socket. Picking up starts a Claude session with full access as the default caller, so someone on the same Wi-Fi must not be able to. `VOICE_ALLOWED_NETS` lets more ranges in.
+
 ### Endpoints
 
 - `/` the phone. `/ws?user=<slack id>&voice=<name>` the call socket. `/health` JSON with CORS.
