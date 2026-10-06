@@ -35,8 +35,8 @@ logger = logging.getLogger("bot.codex")
 CODEX_HOME = os.environ.get("CODEX_HOME", "")
 # Fallback model when a room's model-config entry names no model. The
 # app-server ignores config.toml's `model` key (it uses the account default),
-# so the model must be set per-thread in thread/start. Reasoning effort, by
-# contrast, IS honored from config.toml (model_reasoning_effort = "high").
+# so the model must be set per-thread in thread/start. Reasoning effort is
+# sent per turn from the room's model-config entry (see _map_effort).
 DEFAULT_CODEX_MODEL = os.environ.get("CODEX_MODEL", "gpt-5.6-sol")
 # Equivalent of Claude's `--dangerously-skip-permissions` /
 # codex's `--dangerously-bypass-approvals-and-sandbox`: never prompt for
@@ -47,9 +47,23 @@ CODEX_APPROVAL_POLICY = "never"            # AskForApproval enum
 CODEX_SANDBOX_MODE = "danger-full-access"  # SandboxMode enum
 SESSION_DIR = Path.home() / ".claude-home-base" / "codex-sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
-TURN_TIMEOUT = 600  # 10 min per turn
+# Per-turn ceiling, same knob as the Claude path (CLAUDE_TIMEOUT).
+TURN_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "7200"))
 INIT_TIMEOUT = 15
 REQUEST_TIMEOUT = 30
+
+
+# Map the bot's effort vocabulary onto what Codex models advertise. Current
+# models take low/medium/high/xhigh/max, so every bot effort passes straight
+# through; Codex tolerates a level a model lacks rather than erroring.
+_EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high",
+               "xhigh": "xhigh", "max": "max"}
+
+
+def _map_effort(effort: Optional[str]) -> Optional[str]:
+    if not effort:
+        return None
+    return _EFFORT_MAP.get(effort.lower(), effort.lower())
 
 
 @dataclass
@@ -61,6 +75,7 @@ class CodexSession:
     user_id: str
     codex_thread_id: Optional[str] = None
     current_turn_id: Optional[str] = None
+    effort: Optional[str] = None
     stdin_lock: threading.Lock = field(default_factory=threading.Lock)
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     last_activity: float = field(default_factory=time.time)
@@ -109,11 +124,14 @@ def spawn_codex_session(
     on_status: Optional[Callable[[str], None]] = None,
     model: Optional[str] = None,
     cwd: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> CodexSession:
     """Spawn a codex app-server process and complete the JSON-RPC handshake.
 
     model: the Codex model to run (per-room, from model-config.json). Falls
         back to DEFAULT_CODEX_MODEL.
+    effort: the bot's effort value; mapped onto Codex efforts and sent per-turn
+        in turn/start (see send_to_codex). Falls back to the model default.
     cwd:   working directory the agent operates in. Defaults to the user's home,
         matching the "full access to your machine" posture of the Claude path.
     """
@@ -134,7 +152,7 @@ def spawn_codex_session(
     )
     session = CodexSession(
         proc=proc, thread_ts=thread_ts, channel=channel, user_id=user_id,
-        _on_text=on_text, _on_status=on_status,
+        effort=_map_effort(effort), _on_text=on_text, _on_status=on_status,
     )
     threading.Thread(target=_reader_loop, args=(session,), daemon=True).start()
     threading.Thread(target=_stderr_drain, args=(session,), daemon=True).start()
@@ -183,8 +201,10 @@ def spawn_codex_session(
 def send_to_codex(session: CodexSession, text: str) -> None:
     """Send a user message to the running Codex session.
 
-    If a turn is in flight, use turn/steer. Otherwise, turn/start.
-    Blocks until the turn completes (turn_done event set).
+    If a turn is in flight, use turn/steer. Otherwise, turn/start (carrying the
+    session's mapped reasoning effort — reread per turn by the caller, so an
+    effort change on the /models page lands on the next message). Blocks until
+    the turn completes (turn_done event set).
     """
     params_input = [{"type": "text", "text": text}]
 
@@ -207,6 +227,8 @@ def send_to_codex(session: CodexSession, text: str) -> None:
         session._turn_done.clear()
         session._agent_buffer = []
         params = {"threadId": session.codex_thread_id, "input": params_input}
+        if session.effort:
+            params["effort"] = session.effort
         resp = _rpc_request(session, "turn/start", params)
         if resp and "result" in resp:
             session.current_turn_id = resp["result"].get("turn", {}).get("id")

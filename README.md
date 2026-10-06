@@ -112,8 +112,8 @@ keep in sync. An explicit `"backend"` key still wins when you need it.
 **Notes:** Codex runs with approvals off and no sandbox (`danger-full-access`) —
 the equivalent of Claude's `--dangerously-skip-permissions` — because a
 Slack-driven turn has no human to answer an approval prompt. Reasoning effort
-comes from Codex's own `config.toml` (`model_reasoning_effort`), not
-model-config's `effort`.
+comes from the room's `effort` in model-config, the same as a Claude room, and
+is reread on every message.
 
 ## Bot features
 

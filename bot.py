@@ -996,19 +996,24 @@ def _get_or_create_codex_session(thread_ts: str, channel: str, user_id: str,
     """Get an existing Codex session for this Slack thread or spawn a fresh one.
 
     Mirrors _get_or_create_live_session but routes through bot_codex. The room's
-    Codex model comes from model-config.json (resolve_model_settings)."""
+    Codex model and effort come from model-config.json (resolve_model_settings),
+    reread here on every message."""
     with _codex_sessions_lock:
         existing = _codex_sessions.get(thread_ts)
         if existing and existing.proc.poll() is None:
             existing.last_activity = time.time()
             existing._on_text = on_text
             existing._on_status = on_status
+            # Reread effort so a /models change lands on the next message.
+            _m, effort, _p = resolve_model_settings(channel, user_id)
+            existing.effort = bot_codex._map_effort(effort)
             return existing
 
-        model, _effort, _prompt = resolve_model_settings(channel, user_id)
+        model, effort, _prompt = resolve_model_settings(channel, user_id)
         session = bot_codex.spawn_codex_session(
             thread_ts=thread_ts, channel=channel, user_id=user_id,
-            on_text=on_text, on_status=on_status, model=model or None,
+            on_text=on_text, on_status=on_status,
+            model=model or None, effort=effort,
         )
         _codex_sessions[thread_ts] = session
         return session
