@@ -247,6 +247,24 @@ BOT_USER_ID = os.environ.get("BOT_USER_ID", "")
 # Display name for the bot (used in thread context formatting)
 BOT_DISPLAY_NAME = os.environ.get("BOT_DISPLAY_NAME", "Your AI Employee")
 
+# Event deduplication — a redelivered Slack event must not start a second turn
+_seen_events: dict[str, float] = {}
+_seen_events_lock = threading.Lock()
+DEDUP_TTL = 300  # 5 minutes
+
+
+def _is_duplicate_event(event_id: str) -> bool:
+    """Check if we've already processed this event. Thread-safe with TTL cleanup."""
+    with _seen_events_lock:
+        now = time.time()
+        expired = [k for k, v in _seen_events.items() if now - v > DEDUP_TTL]
+        for k in expired:
+            del _seen_events[k]
+        if event_id in _seen_events:
+            return True
+        _seen_events[event_id] = now
+        return False
+
 # ---------------------------------------------------------------------------
 # Slack app (with signing secret for request verification)
 # ---------------------------------------------------------------------------
@@ -1511,6 +1529,12 @@ def process_message_async(event: dict) -> None:
     queued automatically by the CLI. Otherwise a new process is spawned
     (resuming any prior session for the thread).
     """
+    # Deduplicate Slack redeliveries using client_msg_id or event ts
+    dedup_key = event.get("client_msg_id") or event.get("ts", "")
+    if dedup_key and _is_duplicate_event(dedup_key):
+        logger.info(f"Dropping duplicate event: {dedup_key}")
+        return
+
     user_id = event.get("user", "")
     text = event.get("text", "").strip()
     channel = event.get("channel", "")
