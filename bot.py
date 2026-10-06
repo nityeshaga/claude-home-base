@@ -690,6 +690,12 @@ def _spawn_claude_process(
         cmd.extend(["--permission-mode", "dontAsk"])
     if session_id:
         cmd.extend(["--resume", session_id])
+    # Per-room working directory ("cwd" in model-config.json). The cwd decides
+    # which CLAUDE.md tree loads, so a project channel can start inside its repo.
+    cwd = os.path.expanduser(entry.get("cwd") or "") or PROJECT_DIR
+    if not os.path.isdir(cwd):
+        logger.warning(f"model-config cwd {cwd!r} for {channel} is not a directory; using {PROJECT_DIR}")
+        cwd = PROJECT_DIR
 
     stderr_tmp = tempfile.NamedTemporaryFile(
         mode="w+", suffix=".stderr", delete=False
@@ -716,7 +722,7 @@ def _spawn_claude_process(
         stdout=subprocess.PIPE,
         stderr=stderr_tmp,
         text=True,
-        cwd=PROJECT_DIR,
+        cwd=cwd,
         env=proc_env,
     )
     perm_mode = "bypassPermissions" if user_id in SUPERVISOR_USERS else "dontAsk"
