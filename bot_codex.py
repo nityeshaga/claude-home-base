@@ -35,8 +35,8 @@ logger = logging.getLogger("bot.codex")
 CODEX_HOME = os.environ.get("CODEX_HOME", "")
 # Fallback model when a room's model-config entry names no model. The
 # app-server ignores config.toml's `model` key (it uses the account default),
-# so the model must be set per-thread in thread/start. Reasoning effort, by
-# contrast, IS honored from config.toml (model_reasoning_effort = "high").
+# so the model must be set per-thread in thread/start. Reasoning effort is
+# sent per turn from the room's model-config entry (see _map_effort).
 DEFAULT_CODEX_MODEL = os.environ.get("CODEX_MODEL", "gpt-5.6-sol")
 # Equivalent of Claude's `--dangerously-skip-permissions` /
 # codex's `--dangerously-bypass-approvals-and-sandbox`: never prompt for
@@ -47,9 +47,23 @@ CODEX_APPROVAL_POLICY = "never"            # AskForApproval enum
 CODEX_SANDBOX_MODE = "danger-full-access"  # SandboxMode enum
 SESSION_DIR = Path.home() / ".claude-home-base" / "codex-sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
-TURN_TIMEOUT = 600  # 10 min per turn
+# Per-turn ceiling, same knob as the Claude path (CLAUDE_TIMEOUT).
+TURN_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "7200"))
 INIT_TIMEOUT = 15
 REQUEST_TIMEOUT = 30
+
+
+# Map the bot's effort vocabulary onto what Codex models advertise. Current
+# models take low/medium/high/xhigh/max, so every bot effort passes straight
+# through; Codex tolerates a level a model lacks rather than erroring.
+_EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high",
+               "xhigh": "xhigh", "max": "max"}
+
+
+def _map_effort(effort: Optional[str]) -> Optional[str]:
+    if not effort:
+        return None
+    return _EFFORT_MAP.get(effort.lower(), effort.lower())
 
 
 @dataclass
@@ -61,11 +75,23 @@ class CodexSession:
     user_id: str
     codex_thread_id: Optional[str] = None
     current_turn_id: Optional[str] = None
+    effort: Optional[str] = None
+    # Model the app-server reports on thread/start|resume — what actually serves the thread.
+    served_model: Optional[str] = None
     stdin_lock: threading.Lock = field(default_factory=threading.Lock)
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     last_activity: float = field(default_factory=time.time)
     _on_text: Optional[Callable[[str], None]] = field(default=None, repr=False)
     _on_status: Optional[Callable[[str], None]] = field(default=None, repr=False)
+    # (context_tokens, context_window) after every thread/tokenUsage/updated
+    _on_usage: Optional[Callable[[int, int], None]] = field(default=None, repr=False)
+    # Eyes reactions from mid-turn steering messages; the caller drains them when the turn ends.
+    pending_reactions: list = field(default_factory=list)
+    # Last reported context size / window for the served model (from thread/tokenUsage/updated).
+    context_tokens: int = 0
+    context_window: int = 0
+    # Highest 100k context threshold announced so far (managed by the caller).
+    ctx_notified_level: int = 0
     _next_id: int = 100
     _id_lock: threading.Lock = field(default_factory=threading.Lock)
     _pending: dict = field(default_factory=dict)
@@ -107,11 +133,14 @@ def spawn_codex_session(
     on_status: Optional[Callable[[str], None]] = None,
     model: Optional[str] = None,
     cwd: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> CodexSession:
     """Spawn a codex app-server process and complete the JSON-RPC handshake.
 
     model: the Codex model to run (per-room, from model-config.json). Falls
         back to DEFAULT_CODEX_MODEL.
+    effort: the bot's effort value; mapped onto Codex efforts and sent per-turn
+        in turn/start (see send_to_codex). Falls back to the model default.
     cwd:   working directory the agent operates in. Defaults to the user's home,
         matching the "full access to your machine" posture of the Claude path.
     """
@@ -132,7 +161,7 @@ def spawn_codex_session(
     )
     session = CodexSession(
         proc=proc, thread_ts=thread_ts, channel=channel, user_id=user_id,
-        _on_text=on_text, _on_status=on_status,
+        effort=_map_effort(effort), _on_text=on_text, _on_status=on_status,
     )
     threading.Thread(target=_reader_loop, args=(session,), daemon=True).start()
     threading.Thread(target=_stderr_drain, args=(session,), daemon=True).start()
@@ -157,6 +186,7 @@ def spawn_codex_session(
         })
         if resp and "error" not in resp:
             session.codex_thread_id = existing
+            session.served_model = (resp.get("result", {}).get("thread") or {}).get("model") or model
             logger.info(f"Codex thread resumed {existing} for slack thread {thread_ts}")
         else:
             logger.warning(f"thread/resume failed for {existing}, starting fresh: {resp}")
@@ -172,6 +202,7 @@ def spawn_codex_session(
         if not resp or "error" in resp:
             raise RuntimeError(f"thread/start failed: {resp}")
         session.codex_thread_id = resp["result"]["thread"]["id"]
+        session.served_model = resp["result"]["thread"].get("model") or model
         _save_thread_id(thread_ts, session.codex_thread_id)
         logger.info(f"Codex thread started {session.codex_thread_id} for slack thread {thread_ts}")
 
@@ -181,34 +212,57 @@ def spawn_codex_session(
 def send_to_codex(session: CodexSession, text: str) -> None:
     """Send a user message to the running Codex session.
 
-    If a turn is in flight, use turn/steer. Otherwise, turn/start.
-    Blocks until the turn completes (turn_done event set).
+    If a turn is in flight, use turn/steer. Otherwise, turn/start (carrying the
+    session's mapped reasoning effort — reread per turn by the caller, so an
+    effort change on the /models page lands on the next message). Blocks until
+    the turn completes (turn_done event set).
     """
+    params_input = [{"type": "text", "text": text}]
+
+    # A turn is in flight (the lock is held by the caller waiting on it): steer
+    # it instead of queueing behind it. Must NOT take turn_lock here — the
+    # holder is blocked in _turn_done.wait, so waiting on the lock would be
+    # a deadlock-shaped queue, and the steer would land only after the turn
+    # it meant to steer had already finished.
+    if session.turn_lock.locked() and session.current_turn_id:
+        session.last_activity = time.time()
+        _rpc_request(session, "turn/steer", {
+            "threadId": session.codex_thread_id,
+            "expectedTurnId": session.current_turn_id,
+            "input": params_input,
+        })
+        return
+
     with session.turn_lock:
         session.last_activity = time.time()
         session._turn_done.clear()
         session._agent_buffer = []
-        params_input = [{"type": "text", "text": text}]
-
-        if session.current_turn_id:
-            # Mid-turn steer
-            _rpc_request(session, "turn/steer", {
-                "threadId": session.codex_thread_id,
-                "expectedTurnId": session.current_turn_id,
-                "input": params_input,
-            })
-        else:
-            resp = _rpc_request(session, "turn/start", {
-                "threadId": session.codex_thread_id,
-                "input": params_input,
-            })
-            if resp and "result" in resp:
-                session.current_turn_id = resp["result"].get("turn", {}).get("id")
+        params = {"threadId": session.codex_thread_id, "input": params_input}
+        if session.effort:
+            params["effort"] = session.effort
+        resp = _rpc_request(session, "turn/start", params)
+        if resp and "result" in resp:
+            session.current_turn_id = resp["result"].get("turn", {}).get("id")
 
         if not session._turn_done.wait(timeout=TURN_TIMEOUT):
             logger.error(f"Codex turn timed out after {TURN_TIMEOUT}s in thread {session.thread_ts}")
+            # Abort the turn so the thread is consistent: otherwise the lock is
+            # released while Codex is still mid-turn and the next message's
+            # turn/start collides with it.
+            interrupt(session)
             if session._on_text:
-                session._on_text(f":warning: Codex turn timed out after {TURN_TIMEOUT//60}min")
+                session._on_text(f":warning: stopped after {TURN_TIMEOUT//60} min (bot-side turn limit); "
+                                 f"the thread resumes on your next message")
+
+
+def interrupt(session: CodexSession) -> bool:
+    """Abort the running turn (turn/interrupt — Codex's Esc). True if the turn
+    ended within a few seconds; the thread stays resumable either way."""
+    tid = session.current_turn_id
+    if not tid:
+        return True
+    _rpc_request(session, "turn/interrupt", {"threadId": session.codex_thread_id, "turnId": tid})
+    return session._turn_done.wait(timeout=5)
 
 
 def shutdown(session: CodexSession) -> None:
@@ -319,7 +373,8 @@ def _dispatch(session: CodexSession, data: dict) -> None:
         elif itype in ("commandExecution", "fileChange", "reasoning") and session._on_status:
             session._on_status(itype)
     elif method == "turn/started":
-        tid = params.get("turnId") or params.get("id")
+        turn = params.get("turn") or {}
+        tid = turn.get("id") or params.get("turnId") or params.get("id")
         if tid:
             session.current_turn_id = tid
     elif method == "turn/completed":
@@ -327,7 +382,21 @@ def _dispatch(session: CodexSession, data: dict) -> None:
         session.current_turn_id = None
         session._turn_done.set()
     elif method == "thread/tokenUsage/updated":
-        session._last_usage = params
+        usage = params.get("tokenUsage") or {}
+        session._last_usage = usage
+        # `last.inputTokens` is the prompt size of the latest request = what the
+        # thread's context currently holds; modelContextWindow is the ceiling.
+        ctx = int(((usage.get("last") or {}).get("inputTokens")) or 0)
+        window = int(usage.get("modelContextWindow") or 0)
+        if ctx:
+            session.context_tokens = ctx
+        if window:
+            session.context_window = window
+        if ctx and window and session._on_usage:
+            try:
+                session._on_usage(ctx, window)
+            except Exception as e:
+                logger.warning(f"on_usage callback failed: {e}")
     elif method == "error":
         logger.error(f"Codex error notification: {params}")
         if session._on_text:

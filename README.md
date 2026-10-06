@@ -112,8 +112,8 @@ keep in sync. An explicit `"backend"` key still wins when you need it.
 **Notes:** Codex runs with approvals off and no sandbox (`danger-full-access`) —
 the equivalent of Claude's `--dangerously-skip-permissions` — because a
 Slack-driven turn has no human to answer an approval prompt. Reasoning effort
-comes from Codex's own `config.toml` (`model_reasoning_effort`), not
-model-config's `effort`.
+comes from the room's `effort` in model-config, the same as a Claude room, and
+is reread on every message.
 
 ## Bot features
 
@@ -122,15 +122,20 @@ model-config's `effort`.
 - **Agentic channel behavior** — decides when to respond, stays silent when not relevant (SKIP)
 - **Thread continuity** — session IDs persist per thread
 - **File handling** — downloads attachments, auto-uploads files mentioned in responses
-- **Proactive messaging** — send DMs, post to channels, reply in threads via CLI
+- **Proactive messaging** — send DMs, post to channels, reply in threads via CLI. Every post registers its thread against the session that sent it, so replying to a scheduled job's message resumes that job's session with its context
+- **Rich posts** — `python bot.py --channel-blocks CHANNEL_ID < blocks.json` posts Block Kit (charts, cards, buttons) and registers the thread the same way; a post made through the raw Slack SDK is an orphan no reply can reach
 - **Streaming output** — real-time responses as Claude generates
 - **Native tables** — markdown tables in responses render as real Slack tables (Block Kit `markdown` block)
 - **Per-room models** — `model-config.json` picks which model and reasoning effort answers in each channel or DM, plus an optional per-model system prompt; read fresh on every spawn (no restart), editable from the file explorer's `/models` page. Name a `default_model` there and the page's default row becomes a dropdown too, so you can move every unconfigured room to a different model in one pick
+- **Per-room settings** — a room's entry in `model-config.json` can also set `cwd` (start sessions inside a project so its CLAUDE.md loads), `env` (variables set or unset for that room only) and `mcp_config` (an MCP servers file, e.g. so one person's DM uses their own login)
 - **Prompt cadence** — a per-model prompt is in the system prompt at spawn; give it a cadence and it is also re-sent with every Nth message, so a standing instruction ("keep Slack replies short") doesn't decay over a long thread (Claude backend; Codex rooms take their instructions from Codex's own config)
+- **Standing rules** — put the things people have had to repeat in `STANDING_RULES_DIR` (one file per Slack user ID, plus `shared.md`); the bot adds them to every session that person starts and re-sends them every few messages so they don't fade over a long thread
 - **Pluggable backend** — point any room at OpenAI's Codex instead of Claude by picking a `gpt-*` model for it on the `/models` page; same Slack UX, different engine (see [Codex backend](#codex-backend-optional))
 - **Interactive buttons** — button clicks and menu picks route back into the thread's Claude session as messages, so your AI can offer approve/hold/snooze choices and act on the answer (requires Interactivity enabled in your Slack app config; Request URL = the same `/slack/events` endpoint)
 - **In-thread stop** — type a bare `stop` in a thread where the bot is mid-run to interrupt it (like Esc in the terminal); the session survives with full context, so your next message steers it in the new direction
 - **Mid-turn steering** — message a thread while the bot is mid-run and it sees your message at the next tool-call boundary, inside the same turn (like typing without Esc in the terminal); no more waiting for the whole task to finish before you can course-correct
+- **Session notices** — small grey notes in the thread for the model actually serving it, each 100k tokens of context used, and each skill invoked; they never enter the model's context
+- **No silent drops** — a turn that ends without a reply, a process that dies mid-turn, and a usage limit each get a message in the thread instead of nothing
 
 ## License
 

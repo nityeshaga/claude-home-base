@@ -43,6 +43,9 @@ from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk import WebClient
 
+# Load .env before bot_codex: it reads CODEX_HOME / CODEX_MODEL at import time.
+load_dotenv()
+
 import bot_codex  # alternate backend: rooms with "backend": "codex" route here
 
 # ---------------------------------------------------------------------------
@@ -125,6 +128,17 @@ ALLOWED_CHANNEL_SUBSTRINGS = tuple(
 
 # Trust battery — optional. Set to a directory containing per-user JSON battery files.
 TRUST_BATTERY_DIR = os.environ.get("TRUST_BATTERY_DIR", "")
+
+# Standing rules — things a person has told the bot more than once. One file
+# per Slack user ID (<USER_ID>.md) plus shared.md for everyone, in this
+# directory. Appended to the system prompt at spawn and re-sent every
+# STANDING_RULES_CADENCE human messages, because a rule stated once at spawn
+# decays over a long thread. Empty dir = disabled; cadence 0 = spawn only.
+STANDING_RULES_DIR = os.environ.get("STANDING_RULES_DIR", "")
+try:
+    STANDING_RULES_CADENCE = max(int(os.environ.get("STANDING_RULES_CADENCE", "6")), 0)
+except ValueError:
+    STANDING_RULES_CADENCE = 6
 
 MAX_SLACK_MSG_LEN = 3900
 PORT = int(os.environ.get("PORT", "3000"))
@@ -246,6 +260,24 @@ BOT_USER_ID = os.environ.get("BOT_USER_ID", "")
 
 # Display name for the bot (used in thread context formatting)
 BOT_DISPLAY_NAME = os.environ.get("BOT_DISPLAY_NAME", "Your AI Employee")
+
+# Event deduplication — a redelivered Slack event must not start a second turn
+_seen_events: dict[str, float] = {}
+_seen_events_lock = threading.Lock()
+DEDUP_TTL = 300  # 5 minutes
+
+
+def _is_duplicate_event(event_id: str) -> bool:
+    """Check if we've already processed this event. Thread-safe with TTL cleanup."""
+    with _seen_events_lock:
+        now = time.time()
+        expired = [k for k, v in _seen_events.items() if now - v > DEDUP_TTL]
+        for k in expired:
+            del _seen_events[k]
+        if event_id in _seen_events:
+            return True
+        _seen_events[event_id] = now
+        return False
 
 # ---------------------------------------------------------------------------
 # Slack app (with signing secret for request verification)
@@ -524,6 +556,9 @@ class LiveSession:
     # Messages sent into this process, for the per-model prompt cadence. Resets
     # when the thread's process is respawned after an idle-out.
     turns_sent: int = 0
+    # Set when the human typed `stop` during the current turn. A stopped turn
+    # ends with no text on purpose, so it gets no "no reply" notice.
+    stopped: bool = False
 
 
 # thread_ts → LiveSession
@@ -630,6 +665,27 @@ def _get_trust_battery_context() -> str:
     return "\n".join(lines)
 
 
+def _get_standing_rules(user_id: str) -> str:
+    """The standing rules for this person: their own file, then the shared one."""
+    if not STANDING_RULES_DIR:
+        return ""
+    rules_dir = Path(os.path.expanduser(STANDING_RULES_DIR))
+    parts = []
+    for name in (f"{user_id}.md" if user_id else "", "shared.md"):
+        if not name:
+            continue
+        try:
+            body = (rules_dir / name).read_text().strip()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            logger.warning(f"standing-rules file unreadable: {rules_dir / name}")
+            continue
+        if body:
+            parts.append(body)
+    return "\n\n".join(parts)
+
+
 def _spawn_claude_process(
     session_id: str | None = None,
     user_id: str = "",
@@ -644,6 +700,7 @@ def _spawn_claude_process(
     """
     battery_context = _get_trust_battery_context()
     model, effort, model_prompt = resolve_model_settings(channel, user_id)
+    entry = _resolve_entry(channel, user_id)
     cmd = [
         "claude",
         "-p", battery_context,
@@ -654,8 +711,9 @@ def _spawn_claude_process(
     ]
     if model:
         cmd.extend(["--model", model])
-    if model_prompt:
-        cmd.extend(["--append-system-prompt", model_prompt])
+    appended = "\n\n".join(p for p in (model_prompt, _get_standing_rules(user_id)) if p)
+    if appended:
+        cmd.extend(["--append-system-prompt", appended])
     if user_id in SUPERVISOR_USERS:
         cmd.extend(["--permission-mode", "bypassPermissions"])
     elif user_id in RESTRICTED_USERS:
@@ -668,6 +726,25 @@ def _spawn_claude_process(
         cmd.extend(["--permission-mode", "dontAsk"])
     if session_id:
         cmd.extend(["--resume", session_id])
+    # Per-room MCP servers ("mcp_config": path to an mcpServers JSON file). Passed
+    # via --mcp-config, it shadows a same-named server from user/project scope
+    # and leaves the rest alone — e.g. one person's DM gets their own login to a
+    # shared tool. A file still holding a REPLACE_WITH_ placeholder is skipped.
+    mcp_config = os.path.expanduser(entry.get("mcp_config") or "")
+    if mcp_config:
+        try:
+            if "REPLACE_WITH_" in Path(mcp_config).read_text():
+                logger.info(f"mcp_config for {channel} has placeholder creds; skipping")
+            else:
+                cmd.extend(["--mcp-config", mcp_config])
+        except OSError:
+            logger.warning(f"mcp_config {mcp_config!r} for {channel} unreadable; skipping")
+    # Per-room working directory ("cwd" in model-config.json). The cwd decides
+    # which CLAUDE.md tree loads, so a project channel can start inside its repo.
+    cwd = os.path.expanduser(entry.get("cwd") or "") or PROJECT_DIR
+    if not os.path.isdir(cwd):
+        logger.warning(f"model-config cwd {cwd!r} for {channel} is not a directory; using {PROJECT_DIR}")
+        cwd = PROJECT_DIR
 
     stderr_tmp = tempfile.NamedTemporaryFile(
         mode="w+", suffix=".stderr", delete=False
@@ -680,6 +757,13 @@ def _spawn_claude_process(
         proc_env["CLAUDE_CHANNEL_ID"] = channel
     if session_id:
         proc_env["CLAUDE_SESSION_ID"] = session_id
+    # Per-room env from model-config.json ("env": {VAR: value, VAR: null}).
+    # null unsets the variable — some models need an export, others an unset.
+    for k, v in (entry.get("env") or {}).items():
+        if v is None:
+            proc_env.pop(k, None)
+        else:
+            proc_env[k] = str(v)
 
     proc = subprocess.Popen(
         cmd,
@@ -687,7 +771,7 @@ def _spawn_claude_process(
         stdout=subprocess.PIPE,
         stderr=stderr_tmp,
         text=True,
-        cwd=PROJECT_DIR,
+        cwd=cwd,
         env=proc_env,
     )
     perm_mode = "bypassPermissions" if user_id in SUPERVISOR_USERS else "dontAsk"
@@ -701,10 +785,10 @@ CTX_NOTIFY_STEP = 100_000
 CTX_WINDOW = 1_000_000
 
 
-def _post_context_notice(session: LiveSession, ctx: int) -> None:
+def _post_context_notice(session, ctx: int, window: int = CTX_WINDOW) -> None:
     """Post a small grey context-block notice about context utilization."""
     try:
-        note = f"context window: ~{ctx / 1000:.0f}k of {CTX_WINDOW // 1000}k tokens ({ctx / CTX_WINDOW:.0%})"
+        note = f"context window: ~{ctx / 1000:.0f}k of {window // 1000}k tokens ({ctx / window:.0%})"
         slack_client.chat_postMessage(
             channel=session.channel, thread_ts=session.thread_ts,
             text=note,
@@ -783,6 +867,18 @@ def _track_context(session: LiveSession, data: dict) -> None:
     if level > session.ctx_notified_level:
         session.ctx_notified_level = level
         _post_context_notice(session, ctx)
+    elif level < session.ctx_notified_level:
+        session.ctx_notified_level = level
+
+
+def _track_codex_context(session: "bot_codex.CodexSession", ctx: int, window: int) -> None:
+    """Codex twin of _track_context: the app-server reports the thread's
+    context size after every request; announce each new 100k threshold and
+    re-arm when Codex compacts the thread."""
+    level = ctx // CTX_NOTIFY_STEP
+    if level > session.ctx_notified_level:
+        session.ctx_notified_level = level
+        _post_context_notice(session, ctx, window)
     elif level < session.ctx_notified_level:
         session.ctx_notified_level = level
 
@@ -912,22 +1008,32 @@ def _get_or_create_codex_session(thread_ts: str, channel: str, user_id: str,
     """Get an existing Codex session for this Slack thread or spawn a fresh one.
 
     Mirrors _get_or_create_live_session but routes through bot_codex. The room's
-    Codex model comes from model-config.json (resolve_model_settings)."""
+    Codex model and effort come from model-config.json (resolve_model_settings),
+    reread here on every message."""
     with _codex_sessions_lock:
         existing = _codex_sessions.get(thread_ts)
         if existing and existing.proc.poll() is None:
             existing.last_activity = time.time()
             existing._on_text = on_text
             existing._on_status = on_status
+            existing._on_usage = lambda c, w, _s=existing: _track_codex_context(_s, c, w)
+            # Reread effort so a /models change lands on the next message.
+            _m, effort, _p = resolve_model_settings(channel, user_id)
+            existing.effort = bot_codex._map_effort(effort)
             return existing
 
-        model, _effort, _prompt = resolve_model_settings(channel, user_id)
+        model, effort, _prompt = resolve_model_settings(channel, user_id)
         session = bot_codex.spawn_codex_session(
             thread_ts=thread_ts, channel=channel, user_id=user_id,
-            on_text=on_text, on_status=on_status, model=model or None,
+            on_text=on_text, on_status=on_status,
+            model=model or None, effort=effort,
         )
+        session._on_usage = lambda c, w, _s=session: _track_codex_context(_s, c, w)
         _codex_sessions[thread_ts] = session
-        return session
+    # Same grey notice the Claude path posts on its first assistant event —
+    # named from the model the app-server reported, not the one we asked for.
+    _post_model_notice(session, session.served_model or model or "codex", "")
+    return session
 
 
 def _send_to_claude(session: LiveSession, text: str) -> None:
@@ -938,6 +1044,12 @@ def _send_to_claude(session: LiveSession, text: str) -> None:
         text += f"\n\n[reminder]\n{model_prompt}"
         logger.info(f"Re-injected model prompt at message {session.turns_sent} "
                     f"in thread {session.thread_ts}")
+    if STANDING_RULES_CADENCE and session.turns_sent % STANDING_RULES_CADENCE == 0:
+        rules = _get_standing_rules(session.user_id)
+        if rules:
+            text += f"\n\n[standing rules — still in force]\n{rules}"
+            logger.info(f"Re-injected standing rules at message {session.turns_sent} "
+                        f"in thread {session.thread_ts}")
     msg = json.dumps({
         "type": "user",
         "session_id": "",
@@ -972,6 +1084,20 @@ def _cleanup_idle_sessions() -> None:
                 _save_session(ts, session.session_id)
             with _live_sessions_lock:
                 _live_sessions.pop(ts, None)
+
+        # Codex processes idle out the same way; their thread id was saved to
+        # disk at thread/start, so the next message resumes it.
+        codex_remove = []
+        with _codex_sessions_lock:
+            for ts, session in list(_codex_sessions.items()):
+                if now - session.last_activity > IDLE_TIMEOUT and not session.turn_lock.locked():
+                    codex_remove.append((ts, session))
+        for ts, session in codex_remove:
+            logger.info(f"Cleaning up idle Codex session for thread {ts} (pid={session.proc.pid})")
+            bot_codex.shutdown(session)
+            with _codex_sessions_lock:
+                if _codex_sessions.get(ts) is session:
+                    _codex_sessions.pop(ts, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1070,12 +1196,14 @@ def post_response(channel: str, message: str, thread_ts: str | None = None) -> s
                 result = slack_client.chat_postMessage(
                     channel=channel, thread_ts=parent_ts, text=fallback,
                     blocks=[{"type": "markdown", "text": chunk}],
+                    unfurl_links=False, unfurl_media=False,
                 )
             except Exception as e:
                 logger.warning(f"markdown block post failed, using plain text: {e}")
         if result is None:
             result = slack_client.chat_postMessage(
                 channel=channel, thread_ts=parent_ts, text=fallback,
+                unfurl_links=False, unfurl_media=False,
             )
         if parent_ts is None:
             parent_ts = result["ts"]
@@ -1431,6 +1559,39 @@ def send_to_channel(
     return effective_thread_ts
 
 
+def send_blocks_to_channel(
+    channel: str,
+    blocks: list,
+    text: str = "",
+    session_id: str | None = None,
+    thread_ts: str | None = None,
+) -> str | None:
+    """Post raw Block Kit blocks to a channel (optionally in a thread).
+
+    Registers the thread against session_id (like send_to_channel), so replies
+    to the posted message resume that session. Returns the posted message ts.
+    """
+    kwargs: dict = {"channel": channel, "blocks": blocks,
+                    "text": text or "(rich message)",
+                    "unfurl_links": False, "unfurl_media": False}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    resp = slack_client.chat_postMessage(**kwargs)
+    # Replies key off the thread ROOT: the existing thread if given, else the
+    # new message itself.
+    effective_thread_ts = thread_ts or resp.get("ts")
+
+    if session_id and effective_thread_ts:
+        _save_session(effective_thread_ts, session_id)
+
+    audit_logger.info(
+        f"PROACTIVE_BLOCKS | CHANNEL:{channel} "
+        f"| THREAD:{effective_thread_ts} | SESSION:{session_id or 'none'} "
+        f"| BLOCKS:{len(blocks)}"
+    )
+    return resp.get("ts")
+
+
 # ---------------------------------------------------------------------------
 # Read access (CLI mode) — read messages from any channel Andy has scope for
 # ---------------------------------------------------------------------------
@@ -1511,6 +1672,12 @@ def process_message_async(event: dict) -> None:
     queued automatically by the CLI. Otherwise a new process is spawned
     (resuming any prior session for the thread).
     """
+    # Deduplicate Slack redeliveries using client_msg_id or event ts
+    dedup_key = event.get("client_msg_id") or event.get("ts", "")
+    if dedup_key and _is_duplicate_event(dedup_key):
+        logger.info(f"Dropping duplicate event: {dedup_key}")
+        return
+
     user_id = event.get("user", "")
     text = event.get("text", "").strip()
     channel = event.get("channel", "")
@@ -1651,14 +1818,16 @@ def process_message_async(event: dict) -> None:
     all_texts = []
     first_text_sent = False
     skip_detected = False
+    limit_hit = False
 
     def on_text(text_block: str):
         """Called for each text block Claude produces — post it to Slack immediately."""
-        nonlocal first_text_sent, skip_detected
+        nonlocal first_text_sent, skip_detected, limit_hit
 
         # Usage-limit notices are synthesized by the CLI, not the model.
         # Suppress them; announce the outage once and pause inbound handling.
         if LIMIT_RE.search(text_block):
+            limit_hit = True
             until_epoch = _enter_limit_pause(text_block)
             logger.warning(f"Usage limit hit in thread {thread_ts}: {text_block!r}")
             if until_epoch:
@@ -1695,7 +1864,25 @@ def process_message_async(event: dict) -> None:
             codex_session = _get_or_create_codex_session(
                 thread_ts=thread_ts, channel=channel, user_id=user_id, on_text=on_text,
             )
+            # Mid-turn steering, mirroring the Claude path: send_to_codex
+            # steers the running turn (turn/steer) and returns at once; the
+            # running turn's on_text keeps posting here. Its eyes reaction is
+            # drained when that turn ends.
+            if codex_session.turn_lock.locked():
+                bot_codex.send_to_codex(codex_session, text)
+                codex_session.pending_reactions.append((reaction_channel, reaction_msg_ts))
+                audit_interaction(event, "(steered into running turn)", 0.0,
+                                  codex_session.codex_thread_id or "")
+                logger.info(f"Steering message injected mid-turn in Codex thread {thread_ts}")
+                return
+            codex_session._on_text = on_text
             bot_codex.send_to_codex(codex_session, text)
+            while codex_session.pending_reactions:
+                ch, ts = codex_session.pending_reactions.pop(0)
+                try:
+                    slack_client.reactions_remove(channel=ch, name="eyes", timestamp=ts)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Codex backend error in thread {thread_ts}: {e}")
             try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
@@ -1709,6 +1896,13 @@ def process_message_async(event: dict) -> None:
         except Exception: pass
         if skip_detected:
             logger.info(f"Skipped message from {user_id} in {channel} (not relevant)")
+            return
+        if not all_texts and codex_session.proc.poll() is not None:
+            logger.error(f"Codex process died without responding in thread {thread_ts}")
+            slack_client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text="Sorry, I lost my train of thought. Could you try sending that again?",
+            )
             return
         duration = time.time() - start
         audit_interaction(event, "\n\n".join(all_texts), duration, codex_session.codex_thread_id or "")
@@ -1739,6 +1933,7 @@ def process_message_async(event: dict) -> None:
         with session.turn_lock:
             session._on_text = on_text
             session._turn_done.clear()
+            session.stopped = False
 
             _send_to_claude(session, text)
 
@@ -1789,6 +1984,22 @@ def process_message_async(event: dict) -> None:
         pass
 
     full_response = "\n\n".join(all_texts)
+
+    # The quiet drop: the turn ends clean, the process is still alive, and
+    # nothing was said. No exception, no timeout — so every guard above stays
+    # silent and the ask evaporates. A turn the human stopped, or one that hit
+    # the usage limit, already got its own notice.
+    if not full_response.strip() and not session.stopped and not limit_hit:
+        logger.error(f"Empty response for {user_id} in {channel} after {duration:.1f}s")
+        try:
+            slack_client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text="That turn ended without producing a reply — nothing was lost, "
+                     "but nothing was answered either. Send it again and I'll pick it up.",
+            )
+        except Exception as e:
+            logger.error(f"Could not post empty-response notice: {e}")
+
     audit_interaction(event, full_response, duration, session.session_id)
 
 
@@ -1799,6 +2010,7 @@ def process_message_async(event: dict) -> None:
 
 def _interrupt_session(session: LiveSession) -> bool:
     """Send the CLI an interrupt (the programmatic Esc). True if the turn ended cleanly."""
+    session.stopped = True
     try:
         payload = json.dumps({"type": "control_request",
                               "request_id": f"interrupt-{int(time.time() * 1000)}",
@@ -1810,11 +2022,25 @@ def _interrupt_session(session: LiveSession) -> bool:
         logger.warning(f"Interrupt write failed for {session.thread_ts}: {e}")
     if session._turn_done.wait(timeout=5):
         return True
-    # Interrupt didn't land — hard-kill; the thread resumes via --resume next message
-    try:
-        session.proc.terminate()
-    except Exception:
-        pass
+    # Interrupt didn't land — hard-kill; the thread resumes via --resume next message.
+    # SIGTERM, then SIGKILL: a CLI wedged in a hung tool call ignores SIGTERM, and a
+    # survivor stays in _live_sessions, so every later message in that thread is written
+    # to a stdin nobody reads and the thread goes silent with no error anywhere.
+    proc = session.proc
+    for stop in (proc.terminate, proc.kill):
+        try:
+            stop()
+            proc.wait(timeout=5)
+            break
+        except Exception:
+            pass
+    if proc.poll() is None:
+        logger.error(f"Could not kill pid={proc.pid} for thread {session.thread_ts}")
+    else:
+        logger.info(f"Hard-killed pid={proc.pid} for thread {session.thread_ts}")
+        with _live_sessions_lock:
+            if _live_sessions.get(session.thread_ts) is session:
+                _live_sessions.pop(session.thread_ts, None)
     session._turn_done.set()
     return False
 
@@ -1835,6 +2061,25 @@ def _maybe_stop_from_message(event: dict) -> bool:
     if text not in ("stop", "esc"):
         return False
     thread_ts = event.get("thread_ts") or event.get("ts")
+    with _codex_sessions_lock:
+        codex_session = _codex_sessions.get(thread_ts)
+    if codex_session and codex_session.proc.poll() is None and codex_session.turn_lock.locked():
+        def _do_codex_stop():
+            clean = bot_codex.interrupt(codex_session)
+            note = ("stopped mid-run — tell me where to go instead" if clean
+                    else "interrupt didn't land — the turn is still running; it will time out on its own")
+            try:
+                slack_client.chat_postMessage(
+                    channel=codex_session.channel, thread_ts=codex_session.thread_ts,
+                    text=f"Stopped: {note}",
+                    blocks=[{"type": "context", "elements": [
+                        {"type": "mrkdwn", "text": f":octagonal_sign: _{note}_"}]}],
+                )
+            except Exception:
+                pass
+        threading.Thread(target=_do_codex_stop, daemon=True).start()
+        return True
+
     with _live_sessions_lock:
         session = _live_sessions.get(thread_ts)
     if not session or session.proc.poll() is not None or not session.turn_lock.locked():
@@ -1842,8 +2087,12 @@ def _maybe_stop_from_message(event: dict) -> bool:
 
     def _do_stop():
         clean = _interrupt_session(session)
-        note = ("stopped mid-run — tell me where to go instead" if clean
-                else "had to hard-kill the process; the thread resumes with full context on your next message")
+        if clean:
+            note = "stopped mid-run — tell me where to go instead"
+        elif session.proc.poll() is not None:
+            note = "had to hard-kill the process; the thread resumes with full context on your next message"
+        else:
+            note = "couldn't kill the process — it's wedged and this thread won't answer until it's cleared by hand"
         try:
             slack_client.chat_postMessage(
                 channel=session.channel, thread_ts=session.thread_ts,
@@ -1868,6 +2117,11 @@ def handle_message(event, say):
     """Handle DMs and channel messages."""
     subtype = event.get("subtype")
     if subtype and subtype != "file_share":
+        return
+
+    # Other apps' posts arrive with bot_id set and NO subtype — never treat
+    # them as user messages (loop/noise risk)
+    if event.get("bot_id"):
         return
 
     # Skip @mentions in channels — those are handled by handle_mention() via
@@ -2126,6 +2380,12 @@ def main():
         help="Post a message to a channel and exit",
     )
     parser.add_argument(
+        "--channel-blocks", metavar="CHANNEL",
+        help="Read Block Kit JSON from stdin ({\"text\": ..., \"blocks\": [...]} "
+             "or a bare blocks list), post it to a channel, and register the "
+             "thread for session resume (--session-id or $CLAUDE_SESSION_ID)",
+    )
+    parser.add_argument(
         "--history", metavar="CHANNEL_ID",
         help="Print recent messages from a channel (or a thread if --thread is set)",
     )
@@ -2147,9 +2407,20 @@ def main():
     )
     parser.add_argument(
         "--session-id", metavar="SESSION_ID", dest="session_id",
-        help="Register this Claude session_id as the resume target for replies in this DM thread. Use for cron jobs that DM someone, exit, and want to continue where they left off when the person replies.",
+        help="Register this Claude session_id as the resume target for replies in the posted thread. Use for cron jobs that post, exit, and want to continue where they left off when someone replies. Defaults to $CLAUDE_SESSION_ID, then $CLAUDE_CODE_SESSION_ID.",
     )
     args = parser.parse_args()
+
+    # Session id for thread registration: explicit flag, then CLAUDE_SESSION_ID
+    # (set by the bot for sessions it spawns, and by job wrappers), then
+    # CLAUDE_CODE_SESSION_ID — which the Claude CLI itself exports to every Bash
+    # subprocess, so posts from ANY session register their thread for
+    # reply-resume without wrapper env setup.
+    env_session_id = (
+        os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or None
+    )
 
     # CLI modes — send and exit
     if args.send:
@@ -2162,7 +2433,7 @@ def main():
         else:
             thread_ts = send_dm(
                 args.send[0], args.send[1],
-                session_id=args.session_id,
+                session_id=args.session_id or env_session_id,
                 thread_ts=args.thread,
                 forward_to=args.forward_to,
             )
@@ -2190,7 +2461,27 @@ def main():
             if ts:
                 print(ts)
         else:
-            send_to_channel(args.channel[0], args.channel[1], thread_ts=args.thread)
+            thread_ts = send_to_channel(
+                args.channel[0], args.channel[1],
+                session_id=args.session_id or env_session_id,
+                thread_ts=args.thread,
+            )
+            if thread_ts:
+                print(thread_ts)
+        return
+
+    if args.channel_blocks:
+        raw = sys.stdin.read().strip()
+        data = json.loads(raw)  # let a malformed payload fail loudly
+        blocks = data if isinstance(data, list) else data.get("blocks", [])
+        text = "" if isinstance(data, list) else data.get("text", "")
+        ts = send_blocks_to_channel(
+            args.channel_blocks, blocks, text=text,
+            session_id=args.session_id or env_session_id,
+            thread_ts=args.thread,
+        )
+        if ts:
+            print(ts)
         return
 
     if args.history:
