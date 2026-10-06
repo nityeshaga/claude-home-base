@@ -785,10 +785,10 @@ CTX_NOTIFY_STEP = 100_000
 CTX_WINDOW = 1_000_000
 
 
-def _post_context_notice(session: LiveSession, ctx: int) -> None:
+def _post_context_notice(session, ctx: int, window: int = CTX_WINDOW) -> None:
     """Post a small grey context-block notice about context utilization."""
     try:
-        note = f"context window: ~{ctx / 1000:.0f}k of {CTX_WINDOW // 1000}k tokens ({ctx / CTX_WINDOW:.0%})"
+        note = f"context window: ~{ctx / 1000:.0f}k of {window // 1000}k tokens ({ctx / window:.0%})"
         slack_client.chat_postMessage(
             channel=session.channel, thread_ts=session.thread_ts,
             text=note,
@@ -867,6 +867,18 @@ def _track_context(session: LiveSession, data: dict) -> None:
     if level > session.ctx_notified_level:
         session.ctx_notified_level = level
         _post_context_notice(session, ctx)
+    elif level < session.ctx_notified_level:
+        session.ctx_notified_level = level
+
+
+def _track_codex_context(session: "bot_codex.CodexSession", ctx: int, window: int) -> None:
+    """Codex twin of _track_context: the app-server reports the thread's
+    context size after every request; announce each new 100k threshold and
+    re-arm when Codex compacts the thread."""
+    level = ctx // CTX_NOTIFY_STEP
+    if level > session.ctx_notified_level:
+        session.ctx_notified_level = level
+        _post_context_notice(session, ctx, window)
     elif level < session.ctx_notified_level:
         session.ctx_notified_level = level
 
@@ -1004,6 +1016,7 @@ def _get_or_create_codex_session(thread_ts: str, channel: str, user_id: str,
             existing.last_activity = time.time()
             existing._on_text = on_text
             existing._on_status = on_status
+            existing._on_usage = lambda c, w, _s=existing: _track_codex_context(_s, c, w)
             # Reread effort so a /models change lands on the next message.
             _m, effort, _p = resolve_model_settings(channel, user_id)
             existing.effort = bot_codex._map_effort(effort)
@@ -1015,8 +1028,12 @@ def _get_or_create_codex_session(thread_ts: str, channel: str, user_id: str,
             on_text=on_text, on_status=on_status,
             model=model or None, effort=effort,
         )
+        session._on_usage = lambda c, w, _s=session: _track_codex_context(_s, c, w)
         _codex_sessions[thread_ts] = session
-        return session
+    # Same grey notice the Claude path posts on its first assistant event —
+    # named from the model the app-server reported, not the one we asked for.
+    _post_model_notice(session, session.served_model or model or "codex", "")
+    return session
 
 
 def _send_to_claude(session: LiveSession, text: str) -> None:
@@ -1067,6 +1084,20 @@ def _cleanup_idle_sessions() -> None:
                 _save_session(ts, session.session_id)
             with _live_sessions_lock:
                 _live_sessions.pop(ts, None)
+
+        # Codex processes idle out the same way; their thread id was saved to
+        # disk at thread/start, so the next message resumes it.
+        codex_remove = []
+        with _codex_sessions_lock:
+            for ts, session in list(_codex_sessions.items()):
+                if now - session.last_activity > IDLE_TIMEOUT and not session.turn_lock.locked():
+                    codex_remove.append((ts, session))
+        for ts, session in codex_remove:
+            logger.info(f"Cleaning up idle Codex session for thread {ts} (pid={session.proc.pid})")
+            bot_codex.shutdown(session)
+            with _codex_sessions_lock:
+                if _codex_sessions.get(ts) is session:
+                    _codex_sessions.pop(ts, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1865,6 +1896,13 @@ def process_message_async(event: dict) -> None:
         except Exception: pass
         if skip_detected:
             logger.info(f"Skipped message from {user_id} in {channel} (not relevant)")
+            return
+        if not all_texts and codex_session.proc.poll() is not None:
+            logger.error(f"Codex process died without responding in thread {thread_ts}")
+            slack_client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text="Sorry, I lost my train of thought. Could you try sending that again?",
+            )
             return
         duration = time.time() - start
         audit_interaction(event, "\n\n".join(all_texts), duration, codex_session.codex_thread_id or "")

@@ -76,13 +76,22 @@ class CodexSession:
     codex_thread_id: Optional[str] = None
     current_turn_id: Optional[str] = None
     effort: Optional[str] = None
+    # Model the app-server reports on thread/start|resume — what actually serves the thread.
+    served_model: Optional[str] = None
     stdin_lock: threading.Lock = field(default_factory=threading.Lock)
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     last_activity: float = field(default_factory=time.time)
     _on_text: Optional[Callable[[str], None]] = field(default=None, repr=False)
     _on_status: Optional[Callable[[str], None]] = field(default=None, repr=False)
+    # (context_tokens, context_window) after every thread/tokenUsage/updated
+    _on_usage: Optional[Callable[[int, int], None]] = field(default=None, repr=False)
     # Eyes reactions from mid-turn steering messages; the caller drains them when the turn ends.
     pending_reactions: list = field(default_factory=list)
+    # Last reported context size / window for the served model (from thread/tokenUsage/updated).
+    context_tokens: int = 0
+    context_window: int = 0
+    # Highest 100k context threshold announced so far (managed by the caller).
+    ctx_notified_level: int = 0
     _next_id: int = 100
     _id_lock: threading.Lock = field(default_factory=threading.Lock)
     _pending: dict = field(default_factory=dict)
@@ -177,6 +186,7 @@ def spawn_codex_session(
         })
         if resp and "error" not in resp:
             session.codex_thread_id = existing
+            session.served_model = (resp.get("result", {}).get("thread") or {}).get("model") or model
             logger.info(f"Codex thread resumed {existing} for slack thread {thread_ts}")
         else:
             logger.warning(f"thread/resume failed for {existing}, starting fresh: {resp}")
@@ -192,6 +202,7 @@ def spawn_codex_session(
         if not resp or "error" in resp:
             raise RuntimeError(f"thread/start failed: {resp}")
         session.codex_thread_id = resp["result"]["thread"]["id"]
+        session.served_model = resp["result"]["thread"].get("model") or model
         _save_thread_id(thread_ts, session.codex_thread_id)
         logger.info(f"Codex thread started {session.codex_thread_id} for slack thread {thread_ts}")
 
@@ -371,7 +382,21 @@ def _dispatch(session: CodexSession, data: dict) -> None:
         session.current_turn_id = None
         session._turn_done.set()
     elif method == "thread/tokenUsage/updated":
-        session._last_usage = params
+        usage = params.get("tokenUsage") or {}
+        session._last_usage = usage
+        # `last.inputTokens` is the prompt size of the latest request = what the
+        # thread's context currently holds; modelContextWindow is the ceiling.
+        ctx = int(((usage.get("last") or {}).get("inputTokens")) or 0)
+        window = int(usage.get("modelContextWindow") or 0)
+        if ctx:
+            session.context_tokens = ctx
+        if window:
+            session.context_window = window
+        if ctx and window and session._on_usage:
+            try:
+                session._on_usage(ctx, window)
+            except Exception as e:
+                logger.warning(f"on_usage callback failed: {e}")
     elif method == "error":
         logger.error(f"Codex error notification: {params}")
         if session._on_text:
