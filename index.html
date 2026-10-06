@@ -1232,6 +1232,132 @@
             </div>
         </section>
 
+        <!-- Add-ons -->
+        <section class="pb-16" id="add-ons">
+            <div class="flex items-center gap-3 mb-2">
+                <span class="text-xs font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500">Add-ons</span>
+            </div>
+            <h2 class="text-2xl font-bold mb-2">More ways in, and a longer memory</h2>
+            <p class="text-slate-500 dark:text-slate-400 mb-8">Everything below ships in the repo you already cloned. Each piece is optional and independent. Add one when you feel the lack of it, not before.</p>
+
+            <div class="bg-slate-50 dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800 mb-8">
+                <div class="grid grid-cols-3 gap-3 text-xs text-center">
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-3"><div class="font-semibold text-blue-800 text-sm">Type</div><div class="text-blue-600">Slack</div></div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-3"><div class="font-semibold text-blue-800 text-sm">Talk</div><div class="text-blue-600">a call from your phone</div></div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-3"><div class="font-semibold text-blue-800 text-sm">Tap</div><div class="text-blue-600">a page in your browser</div></div>
+                </div>
+                <div class="grid grid-cols-3 gap-3"><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg></div>
+                <div class="grid grid-cols-3 gap-3 text-xs text-center">
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3"><div class="font-semibold text-sm">Slack bot</div><div class="text-slate-400 dark:text-slate-500">port 3000, behind the tunnel</div></div>
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3"><div class="font-semibold text-sm">Voice bridge</div><div class="text-slate-400 dark:text-slate-500">port 9443, tailnet only</div></div>
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3"><div class="font-semibold text-sm">Notepad &amp; file explorer</div><div class="text-slate-400 dark:text-slate-500">ports 8950 and 8888, tailnet only</div></div>
+                </div>
+                <div class="grid grid-cols-3 gap-3"><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg><svg class="w-5 h-6 text-slate-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 20 24"><path stroke-linecap="round" stroke-width="2" d="M10 0v20m-5-5l5 5 5-5"/></svg></div>
+                <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-5 text-white text-center">
+                    <div class="font-bold">The same Claude sessions</div>
+                    <div class="text-slate-400 text-xs mt-1">A call opens a Slack thread. A tap on the notepad opens a Slack thread. Reply in the thread and you are talking to the session that did the work.</div>
+                    <div class="grid grid-cols-3 gap-2 text-xs mt-4">
+                        <div class="bg-slate-700/50 rounded-lg px-3 py-2">Search <span class="text-slate-500">recall</span></div>
+                        <div class="bg-slate-700/50 rounded-lg px-3 py-2">Diary <span class="text-slate-500">nightly</span></div>
+                        <div class="bg-slate-700/50 rounded-lg px-3 py-2">Trust battery <span class="text-slate-500">nightly</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="space-y-4">
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="notepad">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Notepad</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">page on port 8950</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">A short list, per person, of what needs you. Your AI can only add an item if someone is waiting on you and there is one thing you could do about it, so the list stays short. Open the page, see who is waiting, tap once: the tap starts a session in Slack with that item's instruction. Tell it "stop bringing this up" and the topic is closed for good.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Install the notepad from ~/claude-home-base/notepad by following its README and page/README. Ask me who needs a notepad. Put the notepad command on my PATH, run its tests, and give the page a launchd job. Then add a first item for me so I can see it.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/notepad/README.md" class="text-blue-600 hover:underline" target="_blank">Notepad README</a> &middot; <a href="https://github.com/nityeshaga/claude-home-base/blob/main/notepad/page/README.md" class="text-blue-600 hover:underline" target="_blank">Page README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="voice">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Voice calls</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">page on port 9443 · about $0.05 a minute</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Call your AI and talk. A voice model does the speaking and listening; anything of substance goes to a fresh Claude session with all the usual tools. Every call opens a Slack thread where the transcript and anything visual lands, and replying there afterwards continues the same session. It needs an OpenAI API key with access to the live voice model.</p>
+                    <div class="code-block mt-3">
+                        <span class="cmd">cd</span> ~/claude-home-base/voice-bridge<br>
+                        <span class="cmd">python3</span> <span class="flag">-m</span> venv venv &amp;&amp; venv/bin/<span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt<br><br>
+                        <span class="cmd">cp</span> .env.example .env&nbsp;&nbsp;<span class="comment"># OPENAI_API_KEY, and VOICE_AGENT_NAME</span><br>
+                        <span class="cmd">cp</span> callers.json.example callers.json&nbsp;&nbsp;<span class="comment"># your Slack user ID and first name</span><br><br>
+                        <span class="comment"># Browsers only give a page the microphone over https, so make a certificate</span><br>
+                        <span class="cmd">mkdir</span> certs &amp;&amp; <span class="cmd">openssl</span> req <span class="flag">-x509 -newkey</span> rsa:2048 <span class="flag">-nodes -days</span> 3650 \<br>
+                        &nbsp;&nbsp;<span class="flag">-keyout</span> certs/key.pem <span class="flag">-out</span> certs/cert.pem <span class="flag">-subj</span> <span class="string">"/CN=$(hostname)"</span><br><br>
+                        venv/bin/python bridge.py<br>
+                        <span class="comment"># On your phone, on your tailnet, open:</span><br>
+                        <span class="string">https://your-mac:9443</span>
+                    </div>
+                    <ul class="checklist space-y-2 text-[0.92rem] text-slate-500 dark:text-slate-400 mt-3">
+                        <li>Accept the certificate warning once on each device</li>
+                        <li>Tap the lamp, allow the microphone, and say hello</li>
+                        <li>Check that a thread opened in your Slack DM with the transcript</li>
+                        <li>Make it a service with the plist and wrapper in <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">voice-bridge/launchd/</code></li>
+                    </ul>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
+                        <strong class="text-blue-800 dark:text-blue-400">On a call it must behave differently.</strong> The starter <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">CLAUDE.md</code> has a Voice calls section: write for the ear, post visuals to the thread, and get a spoken yes before any outward action. Keep that section. Speech is mis-heard more often than text is mistyped.
+                    </div>
+                    <div class="mt-3 text-xs text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2">
+                        <strong class="text-amber-800 dark:text-amber-400">Calls from the lock screen.</strong> A phone suspends a web page when it locks. The optional Telegram front door fixes that: you place an ordinary Telegram call and it works locked, with earbuds, in the car. It signs in as a Telegram <em>user</em> account, not a bot, so read the caveat in the README before you set it up, and use a spare number.
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/voice-bridge/README.md" class="text-blue-600 hover:underline" target="_blank">Voice bridge README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="search">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Search</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">needs Python 3.12+</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Keyword and meaning-based search over your AI's files and every past conversation, in one small local database. It is how "what did we decide about pricing in March?" gets a real answer instead of a guess.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Set up search from ~/claude-home-base/search by following its README. Index my projects, diary and conversation logs. Add a launchd job that re-indexes every night at 4am, and show me one search working.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/search/README.md" class="text-blue-600 hover:underline" target="_blank">Search README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="diary">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Daily diary</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">nightly job</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Each night it reads the day's conversations and writes a diary entry: what happened, what it got wrong, what it learned. Over months this is where its judgment comes from, and it is the only job that may edit its own identity.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Install the daily diary job from ~/claude-home-base/jobs/daily-diary by following jobs/README.md. Show me the prompt and wait for my yes before you schedule it.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/jobs/README.md" class="text-blue-600 hover:underline" target="_blank">Jobs README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="trust-battery">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Trust battery</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">two nightly jobs</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">A 0–100 charge per person that sets how much your AI does without asking. A judge reads each day's conversations and moves the charge; below 25% it proposes and waits, above 75% it acts and reports. It turns "I wish it would just do it" and "I wish it had asked" into something that adjusts itself.</p>
+                    <div class="mt-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3 text-[0.88rem] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><span class="text-[0.7rem] font-bold tracking-widest uppercase text-slate-400 dark:text-slate-500 block mb-1">Ask your AI</span><span class="italic">Set up the trust battery from ~/claude-home-base/trust-battery by following its README. Start everyone at 20%. Show me both prompts before you schedule anything.</span></div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/trust-battery/README.md" class="text-blue-600 hover:underline" target="_blank">Trust battery README</a></p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="standing-rules">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">Standing rules</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">one line in .env</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">When you have told it the same thing three times, a note is not going to fix it. Set <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">STANDING_RULES_DIR</code> in the bot's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">.env</code>, and put the rule, in your own words, in a file named after your Slack user ID. The bot adds it to every session you start and repeats it every few messages, so it holds through a long thread.</p>
+                </div>
+
+                <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-5" id="codex">
+                    <div class="flex items-baseline justify-between gap-3 mb-2">
+                        <h3 class="font-semibold">A second engine</h3>
+                        <span class="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">optional</span>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.92rem]">Any channel can be answered by OpenAI's Codex instead of Claude: pick a <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">gpt-*</code> model for that room on the file explorer's <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">/models</code> page. Same Slack experience, including stop and steering. Useful for comparing the two on the same task. Codex rooms read <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">AGENTS.md</code>, which the starter prompt already linked to your <code class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">CLAUDE.md</code>.</p>
+                    <p class="text-slate-500 dark:text-slate-400 text-[0.85rem] mt-3"><a href="https://github.com/nityeshaga/claude-home-base/blob/main/README.md#codex-backend-optional" class="text-blue-600 hover:underline" target="_blank">Codex backend, in the README</a></p>
+                </div>
+            </div>
+        </section>
+
         <!-- What's Next -->
         <section class="pb-16">
             <div class="flex items-center gap-3 mb-2">
