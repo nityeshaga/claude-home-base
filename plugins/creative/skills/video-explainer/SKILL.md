@@ -21,7 +21,21 @@ Don't reuse a previous video's look unless the user asks for it.
 5. **Plain narration.** One idea per sentence. No hype, no metaphors, no team-internal talk for an outside audience.
 6. **Looked at before it's handed over.** Frames from every scene, fixed and re-rendered until clean.
 
+## Teaching something
+
+When the video teaches a concept, not a product:
+
+- **Show why, don't state what.** Build each fact on screen from something the viewer already knows: shapes that
+  move, split, fold or scale until the result is visible. A formula appears only after the picture has earned it.
+- **A few moves, not many facts.** Find the handful of ideas that generate most of the facts, teach those, and
+  rebuild the facts from them.
+- **Use the learner's own problems.** Apply each idea to a real question from their material, and solve it on screen.
+- **Length follows the content.** Don't squeeze a topic into a set length; a teaching video can run long.
+
 ## Tools in `scripts/`
+
+These worked on earlier videos. Use them as references: change them, replace them, or skip them as the video needs.
+
 
 - `tts.py` — narration with Google's voice model, one wav per scene from `narration.json`
   (`[{"id": "s00", "text": "..."}]`). Needs `GEMINI_API_KEY`; `VOICE=` picks the voice.
@@ -35,7 +49,8 @@ Don't reuse a previous video's look unless the user asks for it.
 ## Workflow
 
 1. Brief: audience, the one message, length, beats, source of truth. Then choose the visual direction and say it in
-   one or two sentences in the brief.
+   one or two sentences in the brief. Plan the whole video scene by scene before building any of it. Drafts and
+   sketches are for checking your own work; don't stop for approval unless the user asked to review them.
 2. Script, one scene per beat, ~150 words a minute.
 3. Gather the material. For a web app, run it against a scratch or demo database, never a shared or production one.
 4. Verify the script. Then `tts.py`, `words.py`, `timing.py`.
