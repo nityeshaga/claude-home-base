@@ -6,7 +6,7 @@ description: Make a narrated explainer video built on real material — a walkth
 # Video explainer
 
 A narrated video, rendered with HyperFrames. Read the `hyperframes-core` skill for the composition contract and use
-the `hyperframes` CLI to check, preview and render; skip the `hyperframes` skill's intake and routing.
+the `hyperframes` CLI to check, preview and render; skip the `hyperframes` skill's intake and routing, and its approval gates unless the user asked to review.
 The visual direction is yours to choose for each video. Decide it from the subject and the audience, not from habit:
 a launch video for customers, a code tour for engineers and a process explainer for a team should not look alike.
 Don't reuse a previous video's look unless the user asks for it.
@@ -53,6 +53,7 @@ These worked on earlier videos. Use them as references: change them, replace the
    sketches are for checking your own work; don't stop for approval unless the user asked to review them.
 2. Script, one scene per beat, ~150 words a minute.
 3. Gather the material. For a web app, run it against a scratch or demo database, never a shared or production one.
+   If you must use a live app, remove whatever demo data you created once the captures are done.
 4. Verify the script. Then `tts.py`, `words.py`, `timing.py`.
 5. Build the composition, look at still frames of each scene before the full render, then render and make a small copy for chat
    (`ffmpeg -i in.mp4 -c:v libx264 -crf 28 -c:a aac -b:a 96k out-small.mp4`).
