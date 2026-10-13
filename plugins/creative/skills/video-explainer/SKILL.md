@@ -5,7 +5,8 @@ description: Make a narrated explainer video built on real material — a walkth
 
 # Video explainer
 
-A narrated video, rendered with HyperFrames (load the `hyperframes` skill for how to build and render a composition).
+A narrated video, rendered with HyperFrames. Read the `hyperframes-core` skill for the composition contract and use
+the `hyperframes` CLI to check, preview and render; skip the `hyperframes` skill's intake and routing.
 The visual direction is yours to choose for each video. Decide it from the subject and the audience, not from habit:
 a launch video for customers, a code tour for engineers and a process explainer for a team should not look alike.
 Don't reuse a previous video's look unless the user asks for it.
@@ -26,7 +27,8 @@ Don't reuse a previous video's look unless the user asks for it.
   (`[{"id": "s00", "text": "..."}]`). Needs `GEMINI_API_KEY`; `VOICE=` picks the voice.
 - `words.py` — word-level timings for each wav (whisper via `hyperframes transcribe`).
 - `timing.py` — scene starts and lengths from the audio, and `cue(scene, phrase)`: the second a phrase is spoken.
-  Use it to time animations to words. Whisper misspells names; map them with `fix_words`.
+  Use it to time animations to words. Whisper misspells names and merges words; map them with `fix_words`, or cue
+  on a neighbouring word. Start each scene's audio a beat after the scene does, so the voice never begins on frame 0.
 - `shoot.py` — Playwright helper: screenshot a page and record the rects of named elements, so you can point at them.
 - `contact.py` — frames from every scene of a render, plus one sheet, for checking.
 
@@ -37,7 +39,7 @@ Don't reuse a previous video's look unless the user asks for it.
 2. Script, one scene per beat, ~150 words a minute.
 3. Gather the material. For a web app, run it against a scratch or demo database, never a shared or production one.
 4. Verify the script. Then `tts.py`, `words.py`, `timing.py`.
-5. Build the composition, render, and make a small copy for chat
+5. Build the composition, look at still frames of each scene before the full render, then render and make a small copy for chat
    (`ffmpeg -i in.mp4 -c:v libx264 -crf 28 -c:a aac -b:a 96k out-small.mp4`).
 6. Run `contact.py` and look. Check for overflowing text, visuals off their target, empty screens, and that the audio
    track has sound. Fix and re-render.

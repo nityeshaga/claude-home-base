@@ -11,7 +11,7 @@ Import it from your capture script:
               replace={"http://localhost:3000": "https://example.com"})
 
 Writes capture/02-welcome.png (2880x1800) and capture/02-welcome.json: {"button": [x, y, w, h], ...} in CSS px of the
-1440x900 viewport, which is what scenekit.R() reads. A selector that matches nothing is printed as MISSING and left out.
+1440x900 viewport, so you can draw on exactly what the narration names. A selector that matches nothing is printed as MISSING and left out.
 """
 import json, os
 
