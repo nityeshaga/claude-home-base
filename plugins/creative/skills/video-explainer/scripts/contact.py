@@ -11,7 +11,7 @@ t = json.load(open("timing.json"))
 os.makedirs("contact", exist_ok=True)
 mids = []
 for sid, st in t["starts"].items():
-    d = t["durations"][sid]
+    d = (t.get("lengths") or t["durations"])[sid]   # the scene's on-screen length
     for n, f in enumerate((0.3, 0.65, 0.95)):
         out = f"contact/{sid}-{n}.jpg"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{st + d * f:.2f}", "-i", video, "-frames:v", "1", "-q:v", "3", out], check=True)

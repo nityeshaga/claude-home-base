@@ -44,7 +44,7 @@ These worked on earlier videos. Use them as references: change them, replace the
 - `words.py` — word-level timings for each wav (whisper via `hyperframes transcribe`).
 - `timing.py` — scene starts and lengths from the audio, and `cue(scene, phrase)`: the second a phrase is spoken.
   Use it to time animations to words. Whisper misspells names and merges words; map them with `fix_words`, or cue
-  on a neighbouring word. Start each scene's audio a beat after the scene does, so the voice never begins on frame 0.
+  on a neighbouring word. `lead_in` starts each scene's voice a beat after the scene, so it never begins on frame 0.
 - `shoot.py` — Playwright helper: screenshot a page and record the rects of named elements, so you can point at them.
 - `contact.py` — frames from every scene of a render, plus one sheet, for checking.
 
