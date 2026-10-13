@@ -13,24 +13,26 @@ Don't reuse a previous video's look unless the user asks for it.
 
 ## What makes it good
 
-1. **Built on real material.** Screenshots of the real app with realistic demo data, the real code, the real doc.
-   Draw diagrams when they explain better, but never mock a UI that exists.
+1. **Built on real material.** Screenshots of the real app with realistic demo data, the real code, the real doc or drawn diagrams/mock UI when they explain better.
 2. **Every claim checked against the source** before the voice is recorded. List corrections in `NOTES.md`.
 3. **Visuals move with the words.** When the voice names something, the picture shows it at that moment.
 4. **Works with the sound off.** Each scene's point is readable on screen.
 5. **Plain narration.** One idea per sentence. No hype, no metaphors, no team-internal talk for an outside audience.
 6. **Looked at before it's handed over.** Frames from every scene, fixed and re-rendered until clean.
+7. **Length follows the content.** Don't squeeze a topic into a set length; a teaching video can run long.
+8. **Free to get creative.** Any JavaScript library that runs in a browser can make a frame: charts, 3D, physics,
+   generative art, your own UI. Draw on top of real screenshots and screen recordings, blend them into your own
+   scenes, or rebuild part of a screen to animate it, as long as the real material stays recognisable.
 
 ## Teaching something
 
-When the video teaches a concept, not a product:
+If the video is meant to teach something:
 
 - **Show why, don't state what.** Build each fact on screen from something the viewer already knows: shapes that
   move, split, fold or scale until the result is visible. A formula appears only after the picture has earned it.
 - **A few moves, not many facts.** Find the handful of ideas that generate most of the facts, teach those, and
   rebuild the facts from them.
 - **Use the learner's own problems.** Apply each idea to a real question from their material, and solve it on screen.
-- **Length follows the content.** Don't squeeze a topic into a set length; a teaching video can run long.
 
 ## Tools in `scripts/`
 
@@ -51,9 +53,9 @@ These worked on earlier videos. Use them as references: change them, replace the
 1. Brief: audience, the one message, length, beats, source of truth. Then choose the visual direction and say it in
    one or two sentences in the brief. Plan the whole video scene by scene before building any of it. Drafts and
    sketches are for checking your own work; don't stop for approval unless the user asked to review them.
-2. Script, one scene per beat, ~150 words a minute.
-3. Gather the material. For a web app, run it against a scratch or demo database, never a shared or production one.
-   If you must use a live app, remove whatever demo data you created once the captures are done.
+2. Think like a scriptwrite and make a script, one scene per beat, ~150 words a minute. Pay attention to making it interesting to the viewer while doing the job you set out to do.
+3. Gather the material. For a web app, run it against a scratch or demo database by default.
+   If you must use a live app, or production database remove any confidential info from the html you capture and clean whatever demo data you created once the captures are done.
 4. Verify the script. Then `tts.py`, `words.py`, `timing.py`.
 5. Build the composition, look at still frames of each scene before the full render, then render and make a small copy for chat
    (`ffmpeg -i in.mp4 -c:v libx264 -crf 28 -c:a aac -b:a 96k out-small.mp4`).
