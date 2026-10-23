@@ -121,10 +121,19 @@ ALLOWED_CHANNEL_SUBSTRINGS = tuple(
     p.strip().lower() for p in os.environ.get("ALLOWED_CHANNELS", "").split(",") if p.strip()
 )
 
+# Exact channel-ID allowlist — respond in these channels regardless of name.
+# Use for channels whose names are too generic for substring matching (e.g. "social").
+ALLOWED_CHANNEL_IDS = frozenset(
+    c.strip() for c in os.environ.get("ALLOWED_CHANNEL_IDS", "").split(",") if c.strip()
+)
+
 # Trust battery — optional. Set to a directory containing per-user JSON battery files.
 TRUST_BATTERY_DIR = os.environ.get("TRUST_BATTERY_DIR", "")
 
 MAX_SLACK_MSG_LEN = 3900
+
+# Name-mention routing: whole word only, so "Randy", "handy", "Sandy" don't summon her.
+_ANDY_NAME_RE = re.compile(r"\bandy\b", re.IGNORECASE)
 PORT = int(os.environ.get("PORT", "3000"))
 
 VOTES_FILE = Path(__file__).parent / "votes.json"
@@ -199,17 +208,59 @@ def _channel_allowed(channel_id: str, channel_type: str) -> bool:
       invited. Membership = consent to participate. Note: modern private
       channels report `channel_type: "channel"` (not "group"), so we check
       `is_private` via the channel object.
-    - Public channels: must contain at least one of ALLOWED_CHANNEL_SUBSTRINGS
-      in the name (case-insensitive). Empty list = all pass.
+    - Public channels: pass if the ID is in ALLOWED_CHANNEL_IDS, or the name
+      contains at least one of ALLOWED_CHANNEL_SUBSTRINGS (case-insensitive).
+      Both empty = all pass.
     """
     if channel_type in ("im", "mpim", "group"):
         return True
     if _is_channel_private(channel_id):
         return True
+    if channel_id in ALLOWED_CHANNEL_IDS:
+        return True
     if not ALLOWED_CHANNEL_SUBSTRINGS:
         return True
     name = _get_channel_name(channel_id).lower()
     return any(sub in name for sub in ALLOWED_CHANNEL_SUBSTRINGS)
+
+
+# Per-thread verdict: does the thread's ROOT message address Andy? Cached
+# because the root never changes — one API call per thread, not per reply.
+_thread_engaged_cache: dict[str, bool] = {}
+_thread_engaged_lock = threading.Lock()
+
+
+def _thread_addresses_andy(channel: str, thread_ts: str) -> bool:
+    """True if the ROOT message of a thread names ('andy') or @tags Andy.
+
+    This is the engagement gate for channel threads Andy hasn't already joined:
+    she looks at a thread only if its first message called for her.
+    """
+    with _thread_engaged_lock:
+        if thread_ts in _thread_engaged_cache:
+            return _thread_engaged_cache[thread_ts]
+    verdict = False
+    try:
+        resp = slack_client.conversations_replies(channel=channel, ts=thread_ts, limit=1)
+        msgs = resp.get("messages", [])
+        if msgs:
+            root = msgs[0].get("text", "") or ""
+            verdict = bool(_ANDY_NAME_RE.search(root)) or bool(BOT_USER_ID and f"<@{BOT_USER_ID}>" in root)
+            # A thread rooted on Andy's OWN post (daily report, nugget card,
+            # research monitor) is hers by default: a question there is about
+            # her output even with no @tag. Jack (2026-05-13) and Kate
+            # (2026-09-23) both had to re-ask with an explicit @Andy after an
+            # untagged reply on the daily report was ignored for 14+ minutes.
+            # Replies still go through the judgment prompt (SKIP unless useful).
+            if not verdict and BOT_USER_ID and msgs[0].get("user") == BOT_USER_ID:
+                verdict = True
+    except Exception as e:
+        logger.warning(f"Failed to fetch thread root for {thread_ts}: {e}")
+    with _thread_engaged_lock:
+        if len(_thread_engaged_cache) > 500:
+            _thread_engaged_cache.clear()
+        _thread_engaged_cache[thread_ts] = verdict
+    return verdict
 
 
 def _get_user_name(user_id: str) -> str:
@@ -403,18 +454,43 @@ class LiveSession:
     _on_text: callable = field(default=None, repr=False)
     # Event that signals when a turn (result) is complete
     _turn_done: threading.Event = field(default_factory=threading.Event)
+    # Eyes reactions from mid-turn steering messages, removed by the reader
+    # loop when the absorbing turn's result arrives. CPython list append/pop
+    # are atomic, so no extra lock for this traffic.
+    pending_reactions: list = field(default_factory=list)
+    # Highest 100k context threshold already announced in the thread
+    ctx_notified_level: int = 0
+    # Opener guard (see _reader_loop): per-turn state for holding a short
+    # first text block until we know whether a quick answer follows it.
+    opener_lock: threading.Lock = field(default_factory=threading.Lock)
+    turn_text_seen: bool = False
+    turn_tool_seen: bool = False
+    turn_posted: bool = False
+    held_text: str | None = None
+    held_timer: threading.Timer | None = field(default=None, repr=False)
 
 
 # thread_ts → LiveSession
 _live_sessions: dict[str, LiveSession] = {}
 _live_sessions_lock = threading.Lock()
 
-# thread_ts → count of inbound messages seen in multi-person spaces (public
-# channels + group DMs). Used to re-inject the relevance reminder every
-# REMINDER_EVERY messages, since Claude drifts back to over-responding once a
-# thread gets long. Guarded by _live_sessions_lock. Not GC'd — grows slowly.
-_thread_msg_counts: dict[str, int] = {}
-REMINDER_EVERY = 10
+# Soft-skip safety net: the contract is the literal token "SKIP", but the model
+# sometimes narrates its silence anyway ("No response needed"). We suppress
+# these too, but only when they're the entire first text block (≤80 chars) so a
+# real reply that happens to contain one of these phrases isn't swallowed.
+SOFT_SKIP_PHRASES = {
+    "no response needed",
+    "skipping this",
+    "skipping this one",
+    "nothing for me to do here",
+    "nothing for me here",
+    "staying out of this thread",
+    "staying out of this one",
+    "no reply needed",
+    "nothing to add here",
+    "i'll stay out of this one",
+    "not relevant to me",
+}
 
 # Usage-limit pause: when the account is out of usage, the Claude CLI itself
 # synthesizes an assistant message like "You've hit your limit · resets 4pm
@@ -422,11 +498,115 @@ REMINDER_EVERY = 10
 # it. We intercept that text before it reaches Slack, announce the outage
 # once, and stop forwarding inbound messages until the reset time. Limits are
 # account-wide, so the pause is a single global, not per-thread.
-LIMIT_RE = re.compile(r"You've hit your (usage )?limit", re.I)
+# Observed variants (2026-06 → 2026-09):
+#   "You've hit your limit · resets 9am (UTC)"
+#   "You've hit your org's monthly usage limit"
+#   "You've hit your monthly spend limit · raise it at claude.ai/settings/usage… · your session limit resets 4:50pm (UTC)"
+# Match anything between "You've hit your" and "limit" so new wordings don't leak to Slack.
+LIMIT_RE = re.compile(r"^\s*You've hit your [^·\n]{0,40}?\blimit\b", re.I)
+# Monthly / org / spend limits don't self-reset — a human has to raise them at
+# claude.ai/settings/usage. Those get escalated, not just paused.
+HARD_LIMIT_RE = re.compile(r"\b(monthly|org's|spend)\b", re.I)
 LIMIT_RESET_RE = re.compile(r"resets\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.I)
+# Who to tell when a hard limit is hit. Comma-separated Slack user IDs and an
+# optional channel ID. Empty = no escalation (the in-thread notice still posts).
+LIMIT_ALERT_USERS = tuple(
+    u.strip() for u in os.environ.get("LIMIT_ALERT_USERS", "").split(",") if u.strip()
+)
+LIMIT_ALERT_CHANNEL = os.environ.get("LIMIT_ALERT_CHANNEL", "").strip()
 LIMIT_PAUSE_FALLBACK = 1800  # seconds, if the reset time can't be parsed
 _limit_pause_lock = threading.Lock()
 _limit_pause = {"until": 0.0, "announced": False}
+
+# Model-specific rate limits are a different animal from the account-wide
+# usage limits above. The CLI says e.g.:
+#   "You've reached your Fable limit. Switch to another model, or manage usage
+#    credits at claude.ai/settings/usage…, to continue."
+# Other models still work, so pausing is wrong and so is leaking the text
+# (2026-09-13/14: Kate, Katie and Nityesh each got the raw notice and no
+# answer). Instead: swap new spawns to FALLBACK_MODEL for MODEL_LIMIT_WINDOW
+# seconds and replay the turn that hit the wall on a fresh process.
+MODEL_LIMIT_RE = re.compile(
+    r"^\s*You've reached your (?P<model>[\w .\-\[\]]{1,40}?) limit\b.*?\bswitch to another model",
+    re.I | re.S,
+)
+PRIMARY_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5[1m]").strip()
+FALLBACK_MODEL = os.environ.get("CLAUDE_FALLBACK_MODEL", "claude-opus-5").strip()
+MODEL_LIMIT_WINDOW = int(os.environ.get("MODEL_LIMIT_WINDOW", "3600"))
+_model_limit_lock = threading.Lock()
+_model_limit = {"until": 0.0, "model": ""}
+
+# Auth failures: when the CLI's OAuth login lapses it synthesizes an assistant
+# message on every turn instead of running the model. Observed variants:
+#   "Failed to authenticate: OAuth session expired and could not be refreshed"
+#   "Failed to authenticate. API Error: 401 {…authentication_error…}"
+# (2026-10-23: Kate's thread got that raw text on every single reply.) Suppress
+# it; per thread, post one notice and DM LIMIT_ALERT_USERS once. Login is
+# account-wide, so the first real reply anywhere clears the state and a later
+# lapse alerts again.
+AUTH_FAIL_RE = re.compile(r"^\s*Failed to authenticate\b", re.I)
+_auth_fail_lock = threading.Lock()
+_auth_failed_threads: set[str] = set()
+
+
+def _enter_auth_failure(thread_ts: str) -> bool:
+    """Record an auth failure in a thread. True if it's the first for that
+    thread (i.e. the caller should notify)."""
+    with _auth_fail_lock:
+        if thread_ts in _auth_failed_threads:
+            return False
+        _auth_failed_threads.add(thread_ts)
+        return True
+
+
+def _clear_auth_failures() -> None:
+    with _auth_fail_lock:
+        if _auth_failed_threads:
+            logger.info(f"Auth restored — clearing {len(_auth_failed_threads)} flagged thread(s)")
+            _auth_failed_threads.clear()
+
+
+def _alert_auth_failure(text: str, channel: str, thread_ts: str, skip_users: tuple = ()) -> None:
+    """DM the alert users that the Claude login lapsed. Once per thread."""
+    msg = (
+        f"🔑 Andy's Claude login has expired, so she can't reply until it's re-authenticated.\n"
+        f"CLI said: `{text.strip()[:300]}`\n"
+        f"Triggered in <https://slack.com/archives/{channel}/p{thread_ts.replace('.', '')}|this thread> "
+        f"(you'll get one DM per affected thread)."
+    )
+    for uid in LIMIT_ALERT_USERS:
+        if uid in skip_users:
+            continue
+        try:
+            dm = slack_client.conversations_open(users=uid)
+            slack_client.chat_postMessage(channel=dm["channel"]["id"], text=msg)
+        except Exception as e:
+            logger.error(f"Auth-failure alert DM to {uid} failed: {e}")
+
+
+def _enter_model_limit(text: str) -> bool:
+    """Record a model-specific limit notice. Returns True if this call opened
+    the fallback window (i.e. the caller should announce it once)."""
+    m = MODEL_LIMIT_RE.search(text or "")
+    limited = (m.group("model") if m else "").strip() or "primary"
+    with _model_limit_lock:
+        fresh = time.time() >= _model_limit["until"]
+        _model_limit["until"] = time.time() + MODEL_LIMIT_WINDOW
+        _model_limit["model"] = limited
+        return fresh
+
+
+def _model_fallback_active() -> bool:
+    with _model_limit_lock:
+        return time.time() < _model_limit["until"]
+
+
+def _apply_model_fallback(model):
+    """The model a new process should use: FALLBACK_MODEL while a model limit
+    is active, otherwise whatever was configured."""
+    if FALLBACK_MODEL and _model_fallback_active() and (model or "") != FALLBACK_MODEL:
+        return FALLBACK_MODEL
+    return model
 
 
 def _parse_limit_reset(text: str) -> float:
@@ -453,6 +633,29 @@ def _limit_paused() -> bool:
             _limit_pause["until"] = 0.0
             _limit_pause["announced"] = False
         return _limit_pause["until"] > 0.0
+
+
+def _alert_hard_limit(text: str, channel: str, thread_ts: str, until: datetime) -> None:
+    """Escalate a non-self-resetting limit (monthly spend / org usage) to the
+    people who can raise it. Called at most once per pause window."""
+    msg = (
+        f"🚨 Andy hit a hard usage limit and is paused until an admin raises it.\n"
+        f"CLI said: `{text.strip()}`\n"
+        f"Raise it at https://claude.ai/settings/usage — I'll retry around {until:%-I:%M%p} UTC "
+        f"and re-alert if it's still blocked. Triggered in "
+        f"<https://slack.com/archives/{channel}/p{thread_ts.replace('.', '')}|this thread>."
+    )
+    for uid in LIMIT_ALERT_USERS:
+        try:
+            dm = slack_client.conversations_open(users=uid)
+            slack_client.chat_postMessage(channel=dm["channel"]["id"], text=msg)
+        except Exception as e:
+            logger.error(f"Hard-limit alert DM to {uid} failed: {e}")
+    if LIMIT_ALERT_CHANNEL:
+        try:
+            slack_client.chat_postMessage(channel=LIMIT_ALERT_CHANNEL, text=msg)
+        except Exception as e:
+            logger.error(f"Hard-limit alert to {LIMIT_ALERT_CHANNEL} failed: {e}")
 
 
 def _enter_limit_pause(text: str) -> float | None:
@@ -528,7 +731,7 @@ def _spawn_claude_process(
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
-        "--model", "claude-opus-4-8[1m]",
+        "--model", _apply_model_fallback(PRIMARY_MODEL),
         "--effort", "medium",
     ]
     if user_id in SUPERVISOR_USERS:
@@ -570,6 +773,99 @@ def _spawn_claude_process(
     return proc
 
 
+# Announce context utilization in the thread every N tokens (bot-side only —
+# the notice never enters Claude's context)
+CTX_NOTIFY_STEP = 100_000
+CTX_WINDOW = 1_000_000
+
+
+def _post_context_notice(session: LiveSession, ctx: int) -> None:
+    """Post a small grey context-block notice about context utilization."""
+    try:
+        note = f"context window: ~{ctx / 1000:.0f}k of {CTX_WINDOW // 1000}k tokens ({ctx / CTX_WINDOW:.0%})"
+        slack_client.chat_postMessage(
+            channel=session.channel, thread_ts=session.thread_ts,
+            text=note,
+            blocks=[{"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f":brain: _{note}_"}]}],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to post context notice: {e}")
+
+
+def _post_skill_notice(session: LiveSession, skill: str, args_str: str) -> None:
+    """Post a small grey context-block notice that a skill was invoked."""
+    try:
+        note = f"skill: {skill}" + (f" · {args_str}" if args_str else "")
+        slack_client.chat_postMessage(
+            channel=session.channel, thread_ts=session.thread_ts,
+            text=note,
+            blocks=[{"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f":toolbox: _{note}_"}]}],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to post skill notice: {e}")
+
+
+def _track_context(session: LiveSession, data: dict) -> None:
+    """Watch usage on assistant events; announce each new 100k threshold.
+
+    Context shrinks when the CLI compacts the conversation — re-arm the
+    thresholds then, so utilization gets re-announced on the way back up.
+    """
+    # Subagent (Task) events stream through the same stdout with the
+    # subagent's own, much smaller context — counting them re-arms the
+    # threshold and re-fires the alert every turn. Main-loop events only.
+    if data.get("parent_tool_use_id"):
+        return
+    usage = data.get("message", {}).get("usage") or {}
+    ctx = (usage.get("input_tokens", 0)
+           + usage.get("cache_read_input_tokens", 0)
+           + usage.get("cache_creation_input_tokens", 0))
+    if not ctx:
+        return
+    level = ctx // CTX_NOTIFY_STEP
+    if level > session.ctx_notified_level:
+        session.ctx_notified_level = level
+        _post_context_notice(session, ctx)
+    elif level < session.ctx_notified_level:
+        session.ctx_notified_level = level
+
+
+# Opener guard. A short first text block followed by a tool call is a
+# progress line ("Finding the post first."). On quick jobs it lands seconds
+# before the answer and reads as noise — judged a repeat miss 10/14, 10/15,
+# 10/17 despite memory rules. Hold it; post it only if the turn is still
+# running OPENER_HOLD_SECS later (a real wait line), or if the turn ends
+# with nothing else posted. Otherwise drop it.
+OPENER_HOLD_SECS = 90
+OPENER_MAX_CHARS = 200
+
+
+def _emit_text(session: LiveSession, text: str) -> None:
+    session.turn_posted = True
+    if session._on_text:
+        session._on_text(text)
+
+
+def _release_held(session: LiveSession, reason: str) -> None:
+    """Post the held block, if any. Caller holds opener_lock."""
+    text = session.held_text
+    session.held_text = None
+    if session.held_timer:
+        session.held_timer.cancel()
+        session.held_timer = None
+    if text:
+        logger.info(f"Opener guard: posting held block ({reason}) in {session.thread_ts}")
+        _emit_text(session, text)
+
+
+def _opener_timeout(session: LiveSession, text: str) -> None:
+    with session.opener_lock:
+        if session.held_text is text:
+            _release_held(session, "turn still running")
+
+
 def _reader_loop(session: LiveSession) -> None:
     """Read stdout from a live Claude process and post responses to Slack.
 
@@ -585,6 +881,11 @@ def _reader_loop(session: LiveSession) -> None:
             except json.JSONDecodeError:
                 continue
 
+            # Any output means the session is working — keep the idle reaper
+            # away even when no new message has arrived for a long time
+            # (e.g. a quiet multi-hour background workflow).
+            session.last_activity = time.time()
+
             msg_type = data.get("type")
 
             if msg_type == "system":
@@ -593,28 +894,116 @@ def _reader_loop(session: LiveSession) -> None:
                     session.session_id = sid
 
             elif msg_type == "assistant":
+                _track_context(session, data)
                 content = data.get("message", {}).get("content", [])
+                main_loop = not data.get("parent_tool_use_id")
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
+                    if main_loop and isinstance(block, dict) and block.get("type") == "tool_use":
+                        with session.opener_lock:
+                            held = session.held_text
+                            if held and session.held_timer is None:
+                                if len(held) > OPENER_MAX_CHARS or "\n" in held:
+                                    _release_held(session, "too long to be an opener")
+                                else:
+                                    t = threading.Timer(OPENER_HOLD_SECS, _opener_timeout, args=(session, held))
+                                    t.daemon = True
+                                    session.held_timer = t
+                                    t.start()
+                            session.turn_tool_seen = True
+                    # Skill visibility: announce main-loop skill invocations in a
+                    # grey context block (bot-side only, never enters Claude's
+                    # context). Subagent skill calls are skipped to avoid noise.
+                    if (isinstance(block, dict) and block.get("type") == "tool_use"
+                            and block.get("name") == "Skill"
+                            and not data.get("parent_tool_use_id")):
+                        inp = block.get("input") or {}
+                        args_str = str(inp.get("args") or "")[:120]
+                        _post_skill_notice(session, inp.get("skill", "?"), args_str)
+                    # Subagent text (background Agent runs stream with
+                    # parent_tool_use_id set) is the agent's report to the
+                    # main loop, not a reply. Posting it duplicated Kate's
+                    # 10/14 title batch. Main-loop text only.
+                    if (isinstance(block, dict) and block.get("type") == "text"
+                            and not data.get("parent_tool_use_id")):
                         text = block.get("text", "").strip()
-                        if text and session._on_text:
-                            session._on_text(text)
+                        if not text:
+                            continue
+                        with session.opener_lock:
+                            # Hold any block while nothing has posted this
+                            # turn — narration also shows up after a few
+                            # tool calls (Kate 10/19, after 5 calls).
+                            first = not session.turn_posted and not session.held_text
+                            session.turn_text_seen = True
+                            if first:
+                                # Hold until the next event says what it is.
+                                session.held_text = text
+                                continue
+                            if session.held_text and session.held_timer:
+                                # Opener pending and real text is landing
+                                # now; posting the opener later would only
+                                # put it out of order.
+                                logger.info(f"Opener guard: dropped {session.held_text!r} in {session.thread_ts}")
+                                session.held_timer.cancel()
+                                session.held_timer = None
+                                session.held_text = None
+                            elif session.held_text:
+                                _release_held(session, "followed by text")
+                            _emit_text(session, text)
 
             elif msg_type == "result":
+                with session.opener_lock:
+                    if session.held_text:
+                        if session.held_timer and session.turn_posted:
+                            logger.info(f"Opener guard: dropped {session.held_text!r} in {session.thread_ts}")
+                            session.held_timer.cancel()
+                            session.held_timer = None
+                            session.held_text = None
+                        else:
+                            _release_held(session, "turn ended")
+                    session.turn_text_seen = session.turn_tool_seen = session.turn_posted = False
                 sid = data.get("session_id")
                 if sid:
                     session.session_id = sid
                     _save_session(session.thread_ts, sid)
+                # Clear eyes reactions from steering messages this turn absorbed
+                while session.pending_reactions:
+                    ch, ts = session.pending_reactions.pop(0)
+                    try:
+                        slack_client.reactions_remove(channel=ch, name="eyes", timestamp=ts)
+                    except Exception:
+                        pass
                 session._turn_done.set()
 
     except Exception as e:
         logger.error(f"Reader loop error for thread {session.thread_ts}: {e}")
     finally:
+        with session.opener_lock:
+            _release_held(session, "process ended")
         # Process ended — unblock any thread waiting on a response
         session._turn_done.set()
         logger.info(f"Reader loop ended for thread {session.thread_ts} (pid={session.proc.pid})")
         with _live_sessions_lock:
+            if _live_sessions.get(session.thread_ts) is session:
+                _live_sessions.pop(session.thread_ts, None)
+
+
+
+def _retire_live_session(session: LiveSession) -> None:
+    """Drop a session from the registry and end its process. Used when the
+    process has to be replaced (model-limit fallback); the thread resumes
+    with full context on the next spawn via --resume."""
+    with _live_sessions_lock:
+        if _live_sessions.get(session.thread_ts) is session:
             _live_sessions.pop(session.thread_ts, None)
+    try:
+        session.proc.stdin.close()
+        session.proc.wait(timeout=5)
+    except Exception:
+        try:
+            session.proc.kill()
+        except Exception:
+            pass
+    session._turn_done.set()
 
 
 def _get_or_create_live_session(thread_ts: str, channel: str, user_id: str = "") -> LiveSession:
@@ -763,6 +1152,43 @@ def chunk_message(text: str) -> list:
         chunks.append(text[:split_at])
         text = text[split_at:].lstrip("\n")
     return chunks
+
+
+# A GFM table separator row, e.g. "|---|:---:|" — the signal that a chunk
+# contains a markdown table and should go out as a native markdown block.
+_MD_TABLE_SEP = re.compile(
+    r"^ {0,3}\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def post_response(channel: str, message: str, thread_ts: str | None = None) -> str | None:
+    """Post a markdown response to Slack, chunked.
+
+    Chunks containing a markdown table are sent as a native `markdown` block
+    (Slack renders GFM tables, task lists, headers natively); everything else
+    goes as plain mrkdwn text via md_to_slack. Returns the effective thread_ts
+    (the first message's ts when not already in a thread).
+    """
+    parent_ts = thread_ts
+    for chunk in chunk_message(message):
+        fallback = md_to_slack(chunk)
+        result = None
+        if _MD_TABLE_SEP.search(chunk):
+            try:
+                result = slack_client.chat_postMessage(
+                    channel=channel, thread_ts=parent_ts, text=fallback,
+                    blocks=[{"type": "markdown", "text": chunk}],
+                )
+            except Exception as e:
+                logger.warning(f"markdown block post failed, using plain text: {e}")
+        if result is None:
+            result = slack_client.chat_postMessage(
+                channel=channel, thread_ts=parent_ts, text=fallback,
+            )
+        if parent_ts is None:
+            parent_ts = result["ts"]
+    return parent_ts
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +1365,7 @@ def download_slack_files(event: dict) -> list[Path]:
 # whitespace after the colon). This prevents accidental uploads when file
 # paths are mentioned in normal conversation.
 _ATTACH_PATTERN = re.compile(
-    r'attach:\s*(~/[^\s`\'"<>|*?,]+\.\w+|/(?:Users|tmp|var|home)/[^\s`\'"<>|*?,]+\.\w+)',
+    r'attach:\s*(~/[^\s`\'"<>|*?,]+\.\w+|/(?:Users|tmp|var|home|data)/[^\s`\'"<>|*?,]+\.\w+)',
     re.MULTILINE,
 )
 
@@ -1047,18 +1473,7 @@ def send_dm(
     response = slack_client.conversations_open(users=[user_id])
     channel_id = response["channel"]["id"]
 
-    slack_text = md_to_slack(message)
-    chunks = chunk_message(slack_text)
-
-    parent_ts = thread_ts
-    for chunk in chunks:
-        result = slack_client.chat_postMessage(
-            channel=channel_id, text=chunk, thread_ts=parent_ts,
-        )
-        if parent_ts is None:
-            parent_ts = result["ts"]
-
-    effective_thread_ts = thread_ts or parent_ts
+    effective_thread_ts = post_response(channel_id, message, thread_ts=thread_ts)
 
     # Auto-upload any file paths mentioned in the message
     _auto_upload_files(message, channel_id, thread_ts=effective_thread_ts)
@@ -1109,18 +1524,7 @@ def send_to_channel(
     thread_ts: str | None = None,
 ) -> str | None:
     """Post a message to a channel (optionally in a thread). Returns thread_ts."""
-    slack_text = md_to_slack(message)
-    chunks = chunk_message(slack_text)
-
-    parent_ts = thread_ts
-    for chunk in chunks:
-        result = slack_client.chat_postMessage(
-            channel=channel, text=chunk, thread_ts=parent_ts,
-        )
-        if parent_ts is None:
-            parent_ts = result["ts"]
-
-    effective_thread_ts = thread_ts or parent_ts
+    effective_thread_ts = post_response(channel, message, thread_ts=thread_ts)
 
     # Auto-upload any file paths mentioned in the message
     _auto_upload_files(message, channel, thread_ts=effective_thread_ts)
@@ -1218,6 +1622,7 @@ def process_message_async(event: dict) -> None:
     """
     user_id = event.get("user", "")
     text = event.get("text", "").strip()
+    raw_text = event.get("text", "") or ""  # pre-substitution, for mention detection
     channel = event.get("channel", "")
     thread_ts = event.get("thread_ts") or event.get("ts")
 
@@ -1272,64 +1677,62 @@ def process_message_async(event: dict) -> None:
             f"Forwarded reply from {sender_name} in {original_thread} -> {thread_ts}"
         )
 
-    # For channel messages (not DMs), let Claude decide if it should respond
-    is_channel = event.get("channel_type") not in ("im", "mpim")
-    has_existing_session = _get_session(thread_ts) is not None
-
-    # Check if there's already a live process for this thread
-    has_live_process = thread_ts in _live_sessions and _live_sessions[thread_ts].proc.poll() is None
-
-    # If this is a thread reply and we have no saved session AND no live process,
-    # fetch the full thread history so Claude has context on what was said before.
-    is_thread_reply = thread_ts != msg_ts
-    thread_context = None
-    if not has_existing_session and not has_live_process and is_thread_reply:
-        thread_context = _fetch_thread_context(channel, thread_ts, msg_ts)
-
     channel_type = event.get("channel_type", "")
     if not _channel_allowed(channel, channel_type):
         logger.info(f"Ignoring message in non-allowed channel {channel} ({_get_channel_name(channel)})")
         return
 
-    # Inject the SKIP relevance filter for every message except 1:1 DMs.
-    # 1:1 DM = always respond; any multi-person space (group DM, private or
-    # public channel) = only respond when directly addressed.
+    # 1:1 DM = always respond, no mention needed. In any multi-person space
+    # (public/private channel or group DM), engagement is gated at the THREAD
+    # level on its root message: Andy joins a thread only if its first message
+    # names or @tags her, then stays present for the rest of the thread using
+    # judgment. An explicit @mention in any message always summons her.
     is_dm = channel_type == "im"
+    is_channel_message = channel_type in ("channel", "group", "mpim")
 
-    # In public channels, private channels, and group DMs, count inbound messages
-    # per thread so we can re-inject a shorter relevance reminder every
-    # REMINDER_EVERY messages — Claude forgets the "only respond when addressed"
-    # rule once a thread is long.
-    is_reminder_space = channel_type in ("channel", "group", "mpim")
-    show_reminder = False
-    if is_reminder_space:
-        with _live_sessions_lock:
-            _thread_msg_counts[thread_ts] = _thread_msg_counts.get(thread_ts, 0) + 1
-            count = _thread_msg_counts[thread_ts]
-        # Only inside an ongoing thread — cold contact already gets the full filter.
-        if (has_existing_session or has_live_process) and count % REMINDER_EVERY == 0:
-            show_reminder = True
+    direct_at_mention = bool(BOT_USER_ID and f"<@{BOT_USER_ID}>" in raw_text)
+    mentions_andy = direct_at_mention or bool(_ANDY_NAME_RE.search(raw_text))
 
+    has_existing_session = _get_session(thread_ts) is not None
+    has_live_process = thread_ts in _live_sessions and _live_sessions[thread_ts].proc.poll() is None
+    already_engaged = has_existing_session or has_live_process
+
+    if is_channel_message:
+        is_root = thread_ts == msg_ts
+        # Engaged if: already in this thread, OR explicitly @tagged in this
+        # message (always summonable), OR — for a thread we haven't joined —
+        # its root message addresses Andy. A top-level message is its own root,
+        # so it engages only if it names/@tags her; a bare "andy" in a reply to
+        # a thread Andy never joined follows the root rule and is ignored.
+        if already_engaged or direct_at_mention:
+            engaged = True
+        elif is_root:
+            engaged = mentions_andy
+        else:
+            engaged = _thread_addresses_andy(channel, thread_ts)
+        if not engaged:
+            logger.info(f"Ignoring channel message in {channel} thread {thread_ts} (root doesn't address Andy)")
+            return
+
+    # Cold thread reply: pull prior thread history so a fresh session has context.
+    is_thread_reply = thread_ts != msg_ts
+    thread_context = None
+    if not already_engaged and is_thread_reply:
+        thread_context = _fetch_thread_context(channel, thread_ts, msg_ts)
+
+    # In an engaged thread, a message that doesn't call Andy by name gets a
+    # judgment prompt (present-and-aware — reply only if useful) rather than the
+    # old forced-silence gate. DMs and directly-addressed messages get none.
     prefix = ""
-    if not is_dm and not has_existing_session and not has_live_process:
+    if is_channel_message and not mentions_andy:
         channel_name = _get_channel_name(channel)
         prefix = (
-            f"A new message in #{channel_name}. "
-            "Only respond if you're directly addressed by your name 'Andy' or tagged "
-            "or if you're already part of the conversation thread. "
-            "Respond with exactly \"SKIP\" in ALL other cases. "
-            "Don't say 'Skipping this as it's not relevant' or 'Nothing for me to do here' "
-            "or anything like it. Just be precise and say exactly \"SKIP\" — "
-            "because that will result in the harness not showing your msg "
-            "at all in Slack, which is the correct behaviour.\n\n"
-        )
-    elif show_reminder:
-        channel_name = _get_channel_name(channel)
-        prefix = (
-            f"[Reminder: #{channel_name} is a shared, multi-person space.] "
-            "Only respond if you're directly addressed by name 'Andy', tagged, or "
-            "actively part of this exchange. In all other cases respond with exactly "
-            "\"SKIP\" and nothing else — that suppresses the message in Slack.\n\n"
+            f"A new message in #{channel_name}. You're present in this thread but not "
+            "directly addressed in this message. Use your judgment: reply only if you can "
+            "add something genuinely useful or your input is needed. Otherwise respond with "
+            "the single literal token \"SKIP\" — nothing else, no prose, no preamble. "
+            "Don't narrate staying silent ('Nothing for me here', 'Staying out of this', etc.) "
+            "— those still post as noise; just emit \"SKIP\".\n\n"
         )
 
     if thread_context:
@@ -1347,56 +1750,137 @@ def process_message_async(event: dict) -> None:
     all_texts = []
     first_text_sent = False
     skip_detected = False
+    model_limited = False
+    model_limit_text = ""
+    auth_failed = False
 
     def on_text(text_block: str):
         """Called for each text block Claude produces — post it to Slack immediately."""
-        nonlocal first_text_sent, skip_detected
+        nonlocal first_text_sent, skip_detected, model_limited, model_limit_text, auth_failed
+
+        # Expired login: the CLI synthesizes this on every turn. Never post it
+        # raw; notify once per thread (in-thread + DM), then stay quiet.
+        if AUTH_FAIL_RE.search(text_block):
+            auth_failed = True
+            logger.warning(f"Auth failure in thread {thread_ts}: {text_block!r}")
+            if _enter_auth_failure(thread_ts):
+                try:
+                    slack_client.chat_postMessage(
+                        channel=channel, thread_ts=thread_ts,
+                        text=("My Claude login has expired, so I can't reply right now. I've let "
+                              "Nityesh know. Anything sent here before it's fixed won't get an answer."),
+                    )
+                except Exception as e:
+                    logger.warning(f"Auth-failure notice failed: {e}")
+                # In a 1:1 DM with an alert user the in-thread notice already reached them.
+                skip = (user_id,) if is_dm else ()
+                _alert_auth_failure(text_block, channel, thread_ts, skip_users=skip)
+            return
+
+        # Model-specific limit ("reached your Fable limit … switch to another
+        # model"): not an outage. Remember the notice; the turn loop respawns
+        # this thread on FALLBACK_MODEL and replays the message.
+        if MODEL_LIMIT_RE.search(text_block):
+            model_limited = True
+            model_limit_text = text_block
+            logger.warning(f"Model limit hit in thread {thread_ts}: {text_block!r}")
+            return
 
         # Usage-limit notices are synthesized by the CLI, not the model.
         # Suppress them; announce the outage once and pause inbound handling.
         if LIMIT_RE.search(text_block):
+            hard = bool(HARD_LIMIT_RE.search(text_block))
             until_epoch = _enter_limit_pause(text_block)
-            logger.warning(f"Usage limit hit in thread {thread_ts}: {text_block!r}")
+            logger.warning(f"{'Hard' if hard else 'Session'} usage limit hit in thread {thread_ts}: {text_block!r}")
             if until_epoch:
                 until = datetime.fromtimestamp(until_epoch, timezone.utc)
-                slack_client.chat_postMessage(
-                    channel=channel, thread_ts=thread_ts,
-                    text=(f"I've run out of usage credits — I'll be back around "
-                          f"{until:%-I:%M%p} UTC. Anything sent before then won't get a reply."),
-                )
+                if hard:
+                    notice = (f"I've hit the account's monthly spend limit, which only an admin can raise. "
+                              f"I've flagged Nityesh and will retry around {until:%-I:%M%p} UTC. "
+                              f"Anything sent before then won't get a reply.")
+                else:
+                    notice = (f"I've run out of usage credits — I'll be back around "
+                              f"{until:%-I:%M%p} UTC. Anything sent before then won't get a reply.")
+                slack_client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=notice)
+                if hard:
+                    _alert_hard_limit(text_block, channel, thread_ts, until)
             return
 
-        # Check for SKIP on the very first text block (channel relevance filter)
-        if not first_text_sent and text_block.strip() == "SKIP":
-            skip_detected = True
-            return
+        # Check for SKIP on the very first text block (channel relevance filter).
+        # Exact literal "SKIP" is the contract; the soft-skip net also eats short
+        # narrated-silence phrases the model emits despite the instruction.
+        if not first_text_sent and not skip_detected:
+            stripped = text_block.strip()
+            if stripped == "SKIP":
+                skip_detected = True
+                return
+            normalized = stripped.lower().rstrip(".!? ")
+            if len(stripped) <= 80 and normalized in SOFT_SKIP_PHRASES:
+                logger.info(f"Soft-SKIP detected (suppressed prose): {stripped!r}")
+                skip_detected = True
+                return
 
         all_texts.append(text_block)
+        _clear_auth_failures()
 
         # Auto-upload any file paths mentioned
         _auto_upload_files(text_block, channel, thread_ts=thread_ts)
 
         # Post to Slack
-        slack_text = md_to_slack(text_block)
-        for chunk in chunk_message(slack_text):
-            slack_client.chat_postMessage(
-                channel=channel, text=chunk, thread_ts=thread_ts,
-            )
+        post_response(channel, text_block, thread_ts=thread_ts)
         first_text_sent = True
 
     start = time.time()
     try:
         session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
 
+        # Real-time steering: a turn is already running in this thread — don't
+        # hold the message until it finishes. Write it to stdin now; the CLI
+        # delivers it at the next tool-call boundary inside the running turn,
+        # exactly like typing without Esc in interactive Claude Code. The
+        # running turn's on_text posts to this same thread, so replies route
+        # correctly. If the turn ends in the race window the message simply
+        # starts the next turn, and its eyes reaction is still drained by the
+        # reader on that turn's result. `stop`/`esc` remains the hard
+        # interrupt for aborting a slow tool call outright.
+        if session.turn_lock.locked():
+            _send_to_claude(session, text)
+            session.pending_reactions.append((reaction_channel, reaction_msg_ts))
+            audit_interaction(event, "(steered into running turn)", 0.0, session.session_id)
+            logger.info(f"Steering message injected mid-turn in thread {thread_ts}")
+            return
+
         # Acquire turn_lock — this serializes the send→wait cycle.
         # If another message is already being processed, we block here.
         with session.turn_lock:
-            session._on_text = on_text
-            session._turn_done.clear()
+            timed_out = False
+            for attempt in (0, 1):
+                session._on_text = on_text
+                session._turn_done.clear()
+                _send_to_claude(session, text)
+                timed_out = not session._turn_done.wait(timeout=CLAUDE_TIMEOUT)
+                if timed_out or not model_limited or attempt or not FALLBACK_MODEL:
+                    break
+                # Model-specific limit: retire this process, start a fresh one on
+                # the fallback model (same --resume session, so no context is
+                # lost) and replay the message exactly once. New threads during
+                # the window go straight to the fallback via _apply_model_fallback.
+                announce = _enter_model_limit(model_limit_text)
+                _retire_live_session(session)
+                if announce:
+                    try:
+                        slack_client.chat_postMessage(
+                            channel=channel, thread_ts=thread_ts,
+                            text=(f"My usual model is rate-limited right now, so I'm answering on "
+                                  f"{FALLBACK_MODEL} for the next ~{MODEL_LIMIT_WINDOW // 60} minutes."),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Model-fallback notice failed: {e}")
+                model_limited = False
+                session = _get_or_create_live_session(thread_ts, channel, user_id=user_id)
+                logger.info(f"Model-limit fallback: respawned thread {thread_ts} on {FALLBACK_MODEL}")
 
-            _send_to_claude(session, text)
-
-            if not session._turn_done.wait(timeout=CLAUDE_TIMEOUT):
+            if timed_out:
                 try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
                 except Exception: pass
                 minutes = CLAUDE_TIMEOUT // 60
@@ -1406,8 +1890,19 @@ def process_message_async(event: dict) -> None:
                 )
                 return
 
+            # Fallback model is rate-limited too — say so instead of going silent.
+            if model_limited:
+                try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
+                except Exception: pass
+                logger.error(f"Model limit on fallback model too in thread {thread_ts}")
+                slack_client.chat_postMessage(
+                    channel=channel, thread_ts=thread_ts,
+                    text="Rate-limited on both my usual model and the fallback right now. Try again in a little while.",
+                )
+                return
+
             # Check if the process died without producing a response
-            if not all_texts and not skip_detected and session.proc.poll() is not None:
+            if not all_texts and not skip_detected and not auth_failed and session.proc.poll() is not None:
                 try: slack_client.reactions_remove(channel=reaction_channel, name="eyes", timestamp=reaction_msg_ts)
                 except Exception: pass
                 logger.error(f"Claude process died without responding in thread {thread_ts}")
@@ -1447,6 +1942,72 @@ def process_message_async(event: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# In-thread stop (the Esc key for Slack)
+# ---------------------------------------------------------------------------
+
+
+def _interrupt_session(session: LiveSession) -> bool:
+    """Send the CLI an interrupt (the programmatic Esc). True if the turn ended cleanly."""
+    try:
+        payload = json.dumps({"type": "control_request",
+                              "request_id": f"interrupt-{int(time.time() * 1000)}",
+                              "request": {"subtype": "interrupt"}})
+        with session.stdin_lock:
+            session.proc.stdin.write(payload + "\n")
+            session.proc.stdin.flush()
+    except Exception as e:
+        logger.warning(f"Interrupt write failed for {session.thread_ts}: {e}")
+    if session._turn_done.wait(timeout=5):
+        return True
+    # Interrupt didn't land — hard-kill; the thread resumes via --resume next message
+    try:
+        session.proc.terminate()
+    except Exception:
+        pass
+    session._turn_done.set()
+    return False
+
+
+def _maybe_stop_from_message(event: dict) -> bool:
+    """In-thread Esc: Slack blocks slash commands in thread reply boxes, so a
+    bare 'stop' (or 'esc') in a thread with a running turn interrupts it
+    instead of queueing as a normal message. Returns True if handled.
+
+    Exact-match only — sentences containing 'stop' pass through untouched,
+    and with no running turn the word falls through as a normal message.
+    Authorized users only: interrupting a run is a control action, even in
+    channels where unauthorized users may otherwise talk to the bot.
+    """
+    if not is_authorized(event.get("user", "")):
+        return False
+    text = re.sub(r"<@[A-Z0-9]+>", "", event.get("text", "")).strip().lower()
+    if text not in ("stop", "esc"):
+        return False
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    with _live_sessions_lock:
+        session = _live_sessions.get(thread_ts)
+    if not session or session.proc.poll() is not None or not session.turn_lock.locked():
+        return False  # nothing running here — treat as a normal message
+
+    def _do_stop():
+        clean = _interrupt_session(session)
+        note = ("stopped mid-run — tell me where to go instead" if clean
+                else "had to hard-kill the process; the thread resumes with full context on your next message")
+        try:
+            slack_client.chat_postMessage(
+                channel=session.channel, thread_ts=session.thread_ts,
+                text=f"Stopped: {note}",
+                blocks=[{"type": "context", "elements": [
+                    {"type": "mrkdwn", "text": f":octagonal_sign: _{note}_"}]}],
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_do_stop, daemon=True).start()
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Slack event handlers
 # ---------------------------------------------------------------------------
 
@@ -1467,6 +2028,14 @@ def handle_message(event, say):
         if event.get("channel_type") != "im" and f"<@{BOT_USER_ID}>" in text:
             return
 
+    # Rule 3: unauthorized channels never route — don't even spawn a thread.
+    # DMs/group DMs/private channels/allowed public channels pass; everything
+    # else bails here before any work happens.
+    channel = event.get("channel", "")
+    if not _channel_allowed(channel, event.get("channel_type", "")):
+        logger.info(f"Ignoring message in non-allowed channel {channel} ({_get_channel_name(channel)})")
+        return
+
     user_id = event.get("user", "")
     # Forwarded replies bypass the AUTHORIZED_USERS check: the bot itself
     # opened the DM, and the supervisor who authorized that DM is implicitly
@@ -1482,6 +2051,10 @@ def handle_message(event, say):
             say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
             return
         log_unauthorized(event)
+
+    # In-thread Esc: bare "stop" while a turn is running interrupts it
+    if _maybe_stop_from_message(event):
+        return
 
     # Process async — return immediately so Slack gets its 200
     threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
@@ -1506,6 +2079,10 @@ def handle_mention(event, say):
             say(text="I only respond to authorized users.", thread_ts=event.get("ts"))
             return
         log_unauthorized(event)
+
+    # "@bot stop" in a thread = in-thread Esc
+    if _maybe_stop_from_message(event):
+        return
 
     threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
 
@@ -1545,6 +2122,70 @@ def handle_vote_pass(ack, body):
     user_id = body["user"]["id"]
     vote_key = body["actions"][0]["value"]
     threading.Thread(target=_handle_vote, args=("vote_pass", vote_key, user_id), daemon=True).start()
+
+
+# Registered after the vote handlers — Bolt dispatches to the first matching
+# listener, so vote_* clicks never reach this catch-all.
+@app.action(re.compile(r"^(?!vote_).*"))
+def handle_block_action(ack, body):
+    """Route button clicks / menu selections into the thread's Claude session.
+
+    Any interactive element the bot (or Claude via the SDK) posts lands here.
+    The click becomes a structured message in the same thread, so Claude sees
+    '[Name clicked "Send it"]' and responds there. URL buttons are
+    navigational — ack only.
+    """
+    ack()
+    try:
+        action = body["actions"][0]
+        if action.get("url"):
+            return
+
+        user_id = body["user"]["id"]
+        if not is_authorized(user_id):
+            log_unauthorized(body)
+            return
+
+        atype = action.get("type", "")
+        label = action.get("text", {}).get("text", "")
+        value = action.get("value", "")
+        if atype in ("static_select", "radio_buttons"):
+            opt = action.get("selected_option") or {}
+            label = opt.get("text", {}).get("text", label)
+            value = opt.get("value", value)
+        elif atype in ("checkboxes", "multi_static_select"):
+            opts = action.get("selected_options") or []
+            value = ", ".join(o.get("text", {}).get("text") or o.get("value", "") for o in opts)
+            label = label or "selection"
+        elif atype == "datepicker":
+            value = action.get("selected_date") or ""
+            label = label or "date"
+        elif atype == "timepicker":
+            value = action.get("selected_time") or ""
+            label = label or "time"
+        elif atype == "plain_text_input":
+            label = label or "text input"
+        desc = f'"{label}"' if label else f"action {action.get('action_id', '?')}"
+        if value and value != label:
+            desc += f" (value: {value})"
+
+        message = body["message"]
+        event = {
+            "user": user_id,
+            "channel": body["channel"]["id"],
+            "ts": message["ts"],  # :eyes: lands on the clicked message
+            "thread_ts": message.get("thread_ts") or message["ts"],
+            # "Andy" in the text keeps this from being SKIPped by the
+            # channel-relevance filter when the click starts a fresh session
+            "text": f"[Button click for Andy: {_get_user_name(user_id)} clicked {desc} "
+                    f"(action_id: {action.get('action_id', '')})]",
+            # unique per click so repeat clicks on one message aren't deduped
+            "client_msg_id": f"{action.get('action_id', '')}:{action.get('action_ts', '')}",
+            "channel_type": body["channel"].get("name") == "directmessage" and "im" or "channel",
+        }
+        threading.Thread(target=process_message_async, args=(event,), daemon=True).start()
+    except Exception as e:
+        logger.error(f"Failed to route block action: {e}")
 
 
 # ---------------------------------------------------------------------------
