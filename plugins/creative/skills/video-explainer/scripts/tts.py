@@ -1,17 +1,39 @@
-"""Narration through Google's voice model (Gemini API): one wav per scene in assets/vo/, durations in assets/vo/durations.json.
+"""Narration through Google's voice model (Gemini TTS): one wav per scene in assets/vo/, durations in assets/vo/durations.json.
 
 Run from the video project:  python3 tts.py            (every scene in narration.json)
                              python3 tts.py s03 s07    (only these scenes)
-Env: GEMINI_API_KEY (required), VOICE (default Charon), TTS_MODEL (default gemini-3.8-flash-tts).
+Env: OPENROUTER_API_KEY or GEMINI_API_KEY (OpenRouter is used when both are set),
+     VOICE (default Charon), TTS_MODEL (default gemini-3.8-flash-tts).
 """
-import base64, json, os, struct, sys, time, urllib.request, wave
+import base64, json, os, re, struct, sys, time, urllib.request, wave
 
-KEY = os.environ["GEMINI_API_KEY"]
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
+KEY = None if OPENROUTER_KEY else os.environ["GEMINI_API_KEY"]
 MODEL = os.environ.get("TTS_MODEL", "gemini-3.8-flash-tts")
 VOICE = os.environ.get("VOICE", "Charon")
 
 
+def say_via_openrouter(text, out):
+    body = {"model": f"google/{MODEL}", "voice": VOICE, "input": text}
+    req = urllib.request.Request("https://openrouter.ai/api/v1/audio/speech", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {OPENROUTER_KEY}"})
+    for attempt in range(4):
+        try:
+            r = urllib.request.urlopen(req, timeout=300); pcm, mime = r.read(), r.headers.get("content-type", "")
+            break
+        except Exception as e:
+            print("  retry", attempt, str(e)[:120]); time.sleep(4 * (attempt + 1))
+    else:
+        raise SystemExit("TTS failed for " + out)
+    rate = int((re.search(r"rate=(\d+)", mime) or [0, 24000])[1])   # OpenRouter returns raw 16-bit PCM
+    pcm = pcm[: len(pcm) // 2 * 2]
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(pcm)
+    return len(pcm) / 2 / rate
+
+
 def say(text, out):
+    if OPENROUTER_KEY: return say_via_openrouter(text, out)
     body = {"contents": [{"parts": [{"text": text}]}],
             "generationConfig": {"responseModalities": ["AUDIO"],
                                  "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE}}}}}
