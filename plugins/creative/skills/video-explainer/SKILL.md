@@ -40,7 +40,7 @@ These worked on earlier videos. Use them as references: change them, replace the
 
 
 - `tts.py` — narration with Google's voice model, one wav per scene from `narration.json`
-  (`[{"id": "s00", "text": "..."}]`). Needs `GEMINI_API_KEY`; `VOICE=` picks the voice.
+  (`[{"id": "s00", "text": "..."}]`). Uses `OPENROUTER_API_KEY` if set, else `GEMINI_API_KEY`; `VOICE=` picks the voice.
 - `words.py` — word-level timings for each wav (whisper via `hyperframes transcribe`).
 - `timing.py` — scene starts and lengths from the audio, and `cue(scene, phrase)`: the second a phrase is spoken.
   Use it to time animations to words. Whisper misspells names and merges words; map them with `fix_words`, or cue
