@@ -1806,14 +1806,21 @@ def process_message_async(event: dict) -> None:
                     _alert_hard_limit(text_block, channel, thread_ts, until)
             return
 
+        # A bare "SKIP" is never a message, whenever it arrives. A steered
+        # message that lands after a turn with no tool calls runs as its own
+        # turn, and its SKIP reaches this stale callback with skip_detected
+        # already set — it posted a literal "SKIP" in #editorial 10/30.
+        if text_block.strip() == "SKIP":
+            if first_text_sent or skip_detected:
+                logger.info(f"Late SKIP suppressed in {thread_ts}")
+            skip_detected = skip_detected or not first_text_sent
+            return
+
         # Check for SKIP on the very first text block (channel relevance filter).
         # Exact literal "SKIP" is the contract; the soft-skip net also eats short
         # narrated-silence phrases the model emits despite the instruction.
-        if not first_text_sent and not skip_detected:
+        if not first_text_sent:
             stripped = text_block.strip()
-            if stripped == "SKIP":
-                skip_detected = True
-                return
             normalized = stripped.lower().rstrip(".!? ")
             if len(stripped) <= 80 and normalized in SOFT_SKIP_PHRASES:
                 logger.info(f"Soft-SKIP detected (suppressed prose): {stripped!r}")
