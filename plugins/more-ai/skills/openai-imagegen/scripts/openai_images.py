@@ -1,20 +1,23 @@
 """
-OpenAI Image Generation Library (gpt-image-2)
+OpenAI Image Generation Library (GPT-Image-2.6: Sunburst and Flare)
 
 Usage:
     from openai_images import OpenAIImageGenerator
 
     gen = OpenAIImageGenerator()
     gen.generate("A sunset over mountains", "sunset.png")
+    gen.generate("A cat blinking", "cat.gif", frame_count=8)
     gen.edit(["input.png"], "Add clouds", "output.png")
+    gen.edit(["room.png"], "Recolor the circled vase blue", "out.png", markup="overlay.png")
 
 Environment:
     OPENAI_API_KEY - Required
+
+Needs openai>=3.50 (complexity, markup, gif and svg arrived with the 2.6 models).
 """
 
 import base64
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -22,15 +25,38 @@ from typing import Optional
 from openai import OpenAI
 
 
+MODELS = {
+    "sunburst": "gpt-image-2.6-sunburst",  # detailed work — the default
+    "flare": "gpt-image-2.6-flare",  # fast iteration
+}
+DEFAULT_MODEL = "sunburst"
+
+# SVG output is drawn by a text model working from a reference image the image
+# model makes. The API requires naming that author model.
+SVG_AUTHOR_MODEL = "gpt-6.1-sol"
+
 PRESETS = {
-    "draft": {"quality": "low", "size": "1024x1024", "output_format": "jpeg"},
+    "draft": {"model": "flare", "quality": "low", "size": "1024x1024", "output_format": "jpeg"},
     "social": {"quality": "medium", "size": "1088x1088", "output_format": "png"},
     "print": {"quality": "medium", "size": "2048x2048", "output_format": "png"},
     "wide": {"quality": "medium", "size": "1920x1088", "output_format": "png"},
     "portrait": {"quality": "medium", "size": "1088x1920", "output_format": "png"},
 }
 
-MODEL = "gpt-image-2"
+QUALITIES = ["low", "medium", "high", "xhigh", "max", "auto"]
+COMPLEXITIES = ["low", "medium", "high"]
+BACKGROUNDS = ["transparent", "opaque", "auto"]
+GENERATE_FORMATS = ["png", "jpeg", "webp", "gif", "svg"]
+EDIT_FORMATS = ["png", "jpeg", "webp", "gif"]
+
+_EXTENSION_FORMATS = {
+    ".png": "png",
+    ".jpg": "jpeg",
+    ".jpeg": "jpeg",
+    ".webp": "webp",
+    ".gif": "gif",
+    ".svg": "svg",
+}
 
 
 def get_api_key() -> str:
@@ -41,9 +67,15 @@ def get_api_key() -> str:
     return api_key
 
 
-def _slugify(text: str, max_len: int = 40) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug[:max_len].rstrip("-")
+def resolve_model(model: Optional[str]) -> str:
+    """Accepts 'sunburst', 'flare', or any full model ID."""
+    model = model or DEFAULT_MODEL
+    return MODELS.get(model, model)
+
+
+def resolve_format(output: Path, output_format: Optional[str]) -> str:
+    """An explicit format wins; otherwise the output file's extension decides."""
+    return output_format or _EXTENSION_FORMATS.get(output.suffix.lower(), "png")
 
 
 def _snap_to_16(n: int) -> int:
@@ -60,6 +92,21 @@ def _normalize_size(size: str) -> str:
     return f"{w}x{h}"
 
 
+def _save(result, output: Path, output_format: str) -> list[Path]:
+    saved = []
+    many = len(result.data) > 1
+    for i, image_data in enumerate(result.data):
+        if many:
+            suffix = output.suffix or f".{output_format}"
+            path = output.parent / f"{output.stem}_{i+1}{suffix}"
+        else:
+            path = output
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(base64.b64decode(image_data.b64_json))
+        saved.append(path)
+    return saved
+
+
 class OpenAIImageGenerator:
 
     def __init__(self, api_key: Optional[str] = None):
@@ -70,12 +117,18 @@ class OpenAIImageGenerator:
         prompt: str,
         output: str | Path,
         *,
+        model: Optional[str] = None,
         quality: str = "medium",
         size: str = "auto",
-        output_format: str = "png",
+        output_format: Optional[str] = None,
         output_compression: Optional[int] = None,
         n: int = 1,
         preset: Optional[str] = None,
+        complexity: Optional[str] = None,
+        background: Optional[str] = None,
+        frame_count: Optional[int] = None,
+        frame_duration_ms: Optional[int] = None,
+        svg_model: Optional[str] = None,
     ) -> list[Path]:
         output = Path(output)
 
@@ -84,38 +137,34 @@ class OpenAIImageGenerator:
             quality = defaults["quality"]
             size = defaults["size"]
             output_format = defaults["output_format"]
+            model = model or defaults.get("model")
 
-        size = _normalize_size(size)
+        output_format = resolve_format(output, output_format)
 
         kwargs = {
-            "model": MODEL,
+            "model": resolve_model(model),
             "prompt": prompt,
             "n": n,
             "quality": quality,
-            "size": size,
+            "size": _normalize_size(size),
         }
         if output_format != "png":
             kwargs["output_format"] = output_format
         if output_compression is not None:
             kwargs["output_compression"] = output_compression
+        if complexity:
+            kwargs["complexity"] = complexity
+        if background:
+            kwargs["background"] = background
+        if frame_count is not None:
+            kwargs["frame_count"] = frame_count
+        if frame_duration_ms is not None:
+            kwargs["frame_duration_ms"] = frame_duration_ms
+        if output_format == "svg":
+            kwargs["svg"] = {"model": svg_model or SVG_AUTHOR_MODEL}
 
         result = self.client.images.generate(**kwargs)
-
-        saved = []
-        for i, image_data in enumerate(result.data):
-            if n > 1:
-                stem = output.stem
-                suffix = output.suffix or f".{output_format}"
-                path = output.parent / f"{stem}_{i+1}{suffix}"
-            else:
-                path = output
-
-            image_bytes = base64.b64decode(image_data.b64_json)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(image_bytes)
-            saved.append(path)
-
-        return saved
+        return _save(result, output, output_format)
 
     def edit(
         self,
@@ -123,47 +172,55 @@ class OpenAIImageGenerator:
         instruction: str,
         output: str | Path,
         *,
+        model: Optional[str] = None,
         mask: Optional[str | Path] = None,
+        markup: Optional[str | Path] = None,
         quality: str = "medium",
         size: str = "auto",
-        output_format: str = "png",
+        output_format: Optional[str] = None,
+        output_compression: Optional[int] = None,
+        complexity: Optional[str] = None,
+        background: Optional[str] = None,
+        frame_count: Optional[int] = None,
+        frame_duration_ms: Optional[int] = None,
     ) -> list[Path]:
         output = Path(output)
-        size = _normalize_size(size)
+        output_format = resolve_format(output, output_format)
 
-        image_files = [open(str(img), "rb") for img in images]
+        if mask and markup:
+            raise ValueError("Use --mask or --markup, not both.")
 
+        files = [open(str(img), "rb") for img in images]
         kwargs = {
-            "model": MODEL,
-            "image": image_files if len(image_files) > 1 else image_files[0],
+            "model": resolve_model(model),
+            "image": files if len(files) > 1 else files[0],
             "prompt": instruction,
             "quality": quality,
-            "size": size,
+            "size": _normalize_size(size),
         }
-
+        if output_format != "png":
+            kwargs["output_format"] = output_format
+        if output_compression is not None:
+            kwargs["output_compression"] = output_compression
+        if complexity:
+            kwargs["complexity"] = complexity
+        if background:
+            kwargs["background"] = background
+        if frame_count is not None:
+            kwargs["frame_count"] = frame_count
+        if frame_duration_ms is not None:
+            kwargs["frame_duration_ms"] = frame_duration_ms
         if mask:
             kwargs["mask"] = open(str(mask), "rb")
+            files.append(kwargs["mask"])
+        if markup:
+            kwargs["markup"] = open(str(markup), "rb")
+            files.append(kwargs["markup"])
 
         try:
             result = self.client.images.edit(**kwargs)
         finally:
-            for f in image_files:
+            for f in files:
                 f.close()
-            if mask and "mask" in kwargs:
-                kwargs["mask"].close()
 
-        saved = []
-        for i, image_data in enumerate(result.data):
-            if len(result.data) > 1:
-                stem = output.stem
-                suffix = output.suffix or f".{output_format}"
-                path = output.parent / f"{stem}_{i+1}{suffix}"
-            else:
-                path = output
-
-            image_bytes = base64.b64decode(image_data.b64_json)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(image_bytes)
-            saved.append(path)
-
-        return saved
+        return _save(result, output, output_format)
